@@ -111,7 +111,8 @@ for s, (p_used, p_left, w_used, w_left) in QUOTA.items():
             "resets": {"A": 2, "C": 1}.get(s, 0)}
 eng.write_json(eng.QUOTA, q)
 eng.write_json(eng.CONFIG, {"enabled": True, "prompt": "继续", "stall_nudge": True, "order": "soon",
-                            "auto_start": True, "auto_continue": True, "continue_max": 5})
+                            "auto_start": True, "auto_continue": True, "continue_max": 5,
+                            "quiet_switch": True, "skip": ["G"]})
 eng.write_json(eng.STATE, {"queue": [], "wait": None, "last_switch_at": NOW - 42 * 60, "nudged": {},
                            "switching": None, "status": {"phase": "idle", "text": ""}, "heartbeat": NOW})
 

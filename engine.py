@@ -9,7 +9,7 @@
   --slot X [--force]         切到槽位 X
   --refresh-usage [X ...]    联网刷新额度，不带槽位就刷新全部
   --set-auto on|off          自动切号开关
-  --set-config 键 JSON值      改设置（enabled / prompt / stall_nudge / order / auto_start / auto_continue / continue_max）
+  --set-config 键 JSON值      改设置（enabled / prompt / stall_nudge / order / auto_start / auto_continue / continue_max / quiet_switch）
   --resume 对话id ...        请守护进程在这些对话里发一句「继续」
   --directory-json [--refresh]  空间、订阅（续费 / 到期 / 席位）、成员、重置券（全部走接口）
   --notices-json             消息中心
@@ -43,6 +43,7 @@ META     = os.path.join(P, "meta.json")              # 成员台账：微信名�
 HISTORY  = os.path.join(P, "switch_history.json")    # 切号历史，用来推断对话跑在哪个账号
 AUTH     = os.path.expanduser("~/.codex/auth.json")
 APP_BUNDLE = "/Applications/ChatGPT.app"
+CHATGPT_ID = "com.openai.codex"          # 桌面版改名叫 ChatGPT 了，bundle id 还是 codex
 APP      = APP_BUNDLE + "/Contents/MacOS/ChatGPT"
 # ChatGPT 26.x 把 codex 挪进了 codex-cli/bin；旧路径留作兜底
 CODEX    = next((p for p in (APP_BUNDLE + "/Contents/Resources/codex-cli/bin/codex",
@@ -252,22 +253,45 @@ def quit_app(timeout=15):
     return not running()
 
 
-def launch(slot):
-    """用槽位自己的 profile 启动 ChatGPT
+def launch(slot, background=False):
+    """用槽位自己的 profile 启动 ChatGPT；background=True 时不把它叫到前台（open -g）
 
     走 LaunchServices（open -a）而不是直接 exec 二进制：这样 App 正常登记，
     之后的 codex:// 深链会交给这个实例，而不是另起一个默认 profile 的实例；
     权限弹窗也记在 ChatGPT 自己头上，而不是记在调用方（Python）头上。
     """
     os.makedirs(udd_for(slot), exist_ok=True)
-    subprocess.run(["/usr/bin/open", "-a", APP_BUNDLE, "--args",
+    subprocess.run(["/usr/bin/open"] + (["-g"] if background else []) + ["-a", APP_BUNDLE, "--args",
                     f"--user-data-dir={udd_for(slot)}"],
                    capture_output=True, timeout=30)
 
 
 def activate():
     """把已在运行的 ChatGPT 叫到前台（不会另开实例）"""
-    subprocess.run(["/usr/bin/open", "-b", "com.openai.codex"], capture_output=True)
+    subprocess.run(["/usr/bin/open", "-b", CHATGPT_ID], capture_output=True)
+
+
+def frontmost():
+    """最前面那个 App 的 bundle id（lsappinfo，不需要任何授权）；取不到返回空串"""
+    try:
+        asn = subprocess.run(["/usr/bin/lsappinfo", "front"], capture_output=True, text=True, timeout=5).stdout.strip()
+        out = subprocess.run(["/usr/bin/lsappinfo", "info", "-only", "bundleid", asn],
+                             capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r'bundleID="([^"]+)"', out)
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+def step_back(prev):
+    """后台切号 / 深链之后，ChatGPT 自己跳到了最前面、而之前用户在用的不是它：把它隐藏，
+    焦点自然回到之前那个 App。之前就在用 ChatGPT（或取不到）就不动。返回是否隐藏了"""
+    if not prev or prev == CHATGPT_ID or frontmost() != CHATGPT_ID or not os.access(APP_BIN, os.X_OK):
+        return False
+    try:
+        return subprocess.run([APP_BIN, "--hide-app", CHATGPT_ID], capture_output=True, timeout=10).returncode == 0
+    except Exception:
+        return False
 
 
 def backup_auth():
@@ -358,18 +382,20 @@ def refresh_slot(path):
 
 
 # ---------- 切号 ----------
-def switch(slot, force=False):
+def switch(slot, force=False, background=False):
     """切到指定槽位，返回 (成功?, 结果 dict)。
 
     同一个 workspace 且 App 在跑：只把窗口叫到前台；force=True 时一律退出重开
     （点当前账号 = 干净重启一次，绕开 ChatGPT 偶发的卡死/白屏）。
+    background=True（后台服务自动切号）：重开时不把 ChatGPT 叫到前台，同账号也不去激活它。
     """
     want = info(slot_path(slot))
     if not want:
         return False, {"err": f"槽位 {slot} 不存在或凭证损坏，建议删掉重新添加"}
     cur = info(AUTH)
     if running() and cur and cur["acct"] == want["acct"] and not force:
-        activate()
+        if not background:
+            activate()
         return True, {"email": want["email"], "activated": True}
 
     prev = find_slot(cur["acct"]) if cur else None
@@ -383,7 +409,7 @@ def switch(slot, force=False):
     ok_r, msg_r = refresh_slot(slot_path(slot))
     log(f"槽 {slot} 凭证刷新：{msg_r}")
     shutil.copy2(slot_path(slot), AUTH)
-    launch(slot)
+    launch(slot, background)
     log(f"切换 {cur['email'] if cur else '无'} → {want['email']} "
         f"(槽 {slot} / {(want['acct'] or '')[:8]})")
     record_switch(slot, want["email"])
@@ -1386,16 +1412,18 @@ def load_config():
         except Exception:
             pass
     for k, v in CONFIG_DEFAULTS.items():
-        c.setdefault(k, v)
+        c.setdefault(k, list(v) if isinstance(v, list) else v)
     return c
 
 
 # enabled 总开关；prompt 续答用语；stall_nudge 停滞提醒；
 # order 切号顺序：alpha = 按字母往后找，most = 优先 5 小时剩余最多的，soon = 优先 5 小时窗口最早重置的；
 # auto_start 自动开始计时：5 小时窗口没开始的账号，由后台服务挨个发一句极短的请求起算；
-# auto_continue 回合正常结束后自动发续答用语，continue_max 同一个对话连续自动继续的上限（用户发消息后重新计数）
+# auto_continue 回合正常结束后自动发续答用语，continue_max 同一个对话连续自动继续的上限（用户发消息后重新计数）；
+# quiet_switch 后台切号：自动切号、续答时不把 ChatGPT 叫到前台，也不让它跳到被续答的对话；
+# skip 不参与轮换的槽位：自动切号挑下一个时跳过它们（手动切过去照常能用）
 CONFIG_DEFAULTS = {"enabled": True, "prompt": "继续", "stall_nudge": True, "order": "alpha", "auto_start": False,
-                   "auto_continue": False, "continue_max": 5}
+                   "auto_continue": False, "continue_max": 5, "quiet_switch": True, "skip": []}
 
 
 def set_config(key, value):
@@ -1407,6 +1435,10 @@ def set_config(key, value):
         raise ValueError("切号顺序只能是 alpha、most 或 soon")
     if key == "continue_max" and not 1 <= value <= 50:
         raise ValueError("自动继续次数上限要在 1 到 50 之间")
+    if key == "skip":
+        if not all(type(s) is str for s in value):
+            raise ValueError("skip 要是槽位名列表")
+        value = sorted(set(value))
     with file_lock("config"):
         c = load_config()
         c[key] = value
@@ -1652,6 +1684,8 @@ def api_delete(slot):
     if os.path.exists(slot_path(slot)):
         os.remove(slot_path(slot))
     d = names(); d.pop(slot, None); save_names(d)
+    if slot in load_config()["skip"]:          # 别让以后同名的新槽位继承「不参与轮换」
+        set_config("skip", [s for s in load_config()["skip"] if s != slot])
     with file_lock("quota"):
         q = load_quota(); q.pop(slot, None); write_json(QUOTA, q)
     log(f"删除槽 {slot} ({(i or {}).get('email')})")

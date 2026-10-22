@@ -103,6 +103,13 @@ struct Slot: Identifiable, Decodable, Equatable {
         return w.resetAt
     }
     func exhaustedUntil(_ now: Double) -> Double? { usage.availableAt > now ? usage.availableAt : nil }
+    /// 5 小时或本周窗口用满、还没到重置时间：恢复时刻以它为准
+    func windowFull(_ now: Double) -> Bool {
+        [usage.primary, usage.secondary].contains { w in w.map { $0.resetAt > now && $0.used >= 100 } ?? false }
+    }
+    /// 只因为空间 credits 用完而不可用（两个窗口都没满）：什么时候恢复要看空间所有者。
+    /// 窗口满了时服务端也常报 workspace_owner_credits_depleted（意思是空间没 credits 让你超额续用），那种仍按重置时间恢复
+    func creditsOnly(_ now: Double) -> Bool { usage.limitType == "workspace_owner_credits_depleted" && !windowFull(now) }
     func usable(_ now: Double) -> Bool { !needsLogin && usage.availableAt >= 0 && usage.availableAt <= now }
 }
 
@@ -125,8 +132,10 @@ struct AutoConfig: Decodable {
     var auto_start: Bool
     var auto_continue: Bool
     var continue_max: Int
+    var quiet_switch: Bool
+    var skip: [String]
     static let empty = AutoConfig(enabled: false, prompt: "继续", stall_nudge: true, order: "alpha", auto_start: false,
-                                  auto_continue: false, continue_max: 5)
+                                  auto_continue: false, continue_max: 5, quiet_switch: true, skip: [])
 }
 
 struct ListPayload: Decodable {

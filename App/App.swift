@@ -554,6 +554,12 @@ enum Entry {
         if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--notify" {
             exit(Notifier.post(Array(CommandLine.arguments.dropFirst(2))))
         }
+        // 后台切号时 ChatGPT 自己跳到了最前面：隐藏它，焦点回到用户原来的 App（同 Cmd+H，不需要授权）
+        if CommandLine.arguments.count >= 3 && CommandLine.arguments[1] == "--hide-app" {
+            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: CommandLine.arguments[2])
+            apps.forEach { _ = $0.hide() }       // hide() 对后台 App 常返回 false 但照样隐藏了，只看有没有这个 App
+            exit(apps.isEmpty ? 1 : 0)
+        }
         AccountsApp.main()
     }
 }

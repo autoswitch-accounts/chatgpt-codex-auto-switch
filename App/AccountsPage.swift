@@ -57,6 +57,9 @@ struct AccountsPage: View {
         }
         return r.sorted(using: order)
     }
+    // 有账号设成「不参与自动轮换」时，表格分两组显示
+    private var rotationRows: [AccountRow] { rows.filter { !store.skipped($0.s) } }
+    private var skippedRows: [AccountRow] { rows.filter { store.skipped($0.s) } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -107,7 +110,7 @@ struct AccountsPage: View {
     }
 
     private var table: some View {
-        Table(rows, selection: $selection, sortOrder: $order) {
+        Table(of: AccountRow.self, selection: $selection, sortOrder: $order) {
             TableColumn("账号", value: \.letter) { r in
                 HStack(spacing: 9) {
                     Avatar(letter: r.s.slot, size: 26)
@@ -119,9 +122,12 @@ struct AccountsPage: View {
                             Text(r.s.email).fontWeight(r.s.current ? .semibold : .regular).lineLimit(1)
                             if r.s.current { Pill(text: "运行中", color: Palette.green) }
                         }
-                        Text(["槽 \(r.s.slot)", r.s.name, (r.s.wechat ?? "").isEmpty ? "" : "微信 \(r.s.wechat!)"]
+                        // 「不轮换」放在小字行里：放邮箱旁边会把邮箱挤成「…」
+                        Text(["槽 \(r.s.slot)", r.s.name, (r.s.wechat ?? "").isEmpty ? "" : "微信 \(r.s.wechat!)",
+                              store.skipped(r.s) ? "不轮换" : ""]
                                 .filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            .help(store.skipped(r.s) ? "不参与自动轮换：撞限切号时不会切到这个账号" : "")
                     }
                 }
                 .padding(.vertical, 3)
@@ -173,6 +179,22 @@ struct AccountsPage: View {
             .width(min: 80, ideal: 88)
             TableColumn("状态", value: \.statusRank) { r in SlotStatus(s: r.s, busy: store.busy == r.s.slot, now: store.now) }
                 .width(min: 80, ideal: 96)
+        } rows: {
+            let skipped = skippedRows
+            if skipped.isEmpty {
+                ForEach(rows) { TableRow($0) }
+            } else {
+                Section {
+                    ForEach(rotationRows) { TableRow($0) }
+                } header: {
+                    Text("参与轮换 · \(rotationRows.count)")
+                }
+                Section {
+                    ForEach(skipped) { TableRow($0) }
+                } header: {
+                    Text("不参与轮换 · \(skipped.count)　撞限自动切号时跳过，手动切换照常可用")
+                }
+            }
         }
         .alternatingRowBackgrounds(.disabled)   // 不要斑马纹：和概览、设置一样透出页面底色
         .scrollContentBackground(.hidden)
@@ -186,6 +208,7 @@ struct AccountsPage: View {
                 if let w = s.usage.primary, w.untouched, w.resetAt > store.now {
                     Button("让 5 小时额度开始计时…") { store.confirmStart = s }
                 }
+                Button(store.skipped(s) ? "恢复参与自动轮换" : "不参与自动轮换") { store.setSkipped(s, !store.skipped(s)) }
                 Button("复制邮箱") { copyToPasteboard(s.email) }
                 Button("重命名…") { store.renaming = s }
                 Divider()
@@ -232,9 +255,11 @@ struct SlotStatus: View {
         } else if s.needsLogin {
             StatusChip(text: "需重新登录", color: Palette.red)
         } else if let until = s.exhaustedUntil(now) {
-            StatusChip(text: s.usage.limitType == "workspace_owner_credits_depleted" ? "空间无额度" : "\(TimeText.short(until)) 恢复",
-                       color: Palette.red)
-                .help(s.usage.blockReason.isEmpty ? "额度已用完" : s.usage.blockReason)
+            StatusChip(text: s.creditsOnly(now) ? "空间无额度" : "\(TimeText.short(until)) 恢复", color: Palette.red)
+                .help(!s.usage.blockReason.isEmpty ? s.usage.blockReason
+                      : s.creditsOnly(now) ? "空间的 credits 用完了（5 小时和本周额度都没满），要等空间所有者充值"
+                      : s.usage.limitType == "workspace_owner_credits_depleted" ? "额度用完，空间也没有 credits 可以超额续用；到点恢复"
+                      : "额度已用完，到点恢复")
         } else if s.current {
             StatusChip(text: "使用中", color: Palette.accent)
         } else if s.usage.availableAt == 0 {
@@ -285,6 +310,16 @@ struct AccountInspector: View {
                     } label: { Image(systemName: "ellipsis.circle") }
                         .menuStyle(.borderlessButton).fixedSize()
                 }
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("不参与自动轮换")
+                        Text("打开后，撞限自动切号时跳过这个账号；手动切过去照常能用")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: Binding(get: { store.skipped(s) }, set: { store.setSkipped(s, $0) }))
+                        .toggleStyle(SwitchStyle()).labelsHidden()
+                }
 
                 group("额度") {
                     BigQuota(label: "5 小时额度", window: s.usage.primary, now: store.now)
@@ -294,8 +329,9 @@ struct AccountInspector: View {
                     }
                     BigQuota(label: "本周额度", window: s.usage.secondary, now: store.now)
                     if !s.usage.limitType.isEmpty {
-                        InfoRow("撞限类型", s.usage.limitType == "workspace_owner_credits_depleted"
-                                ? "空间 credits 用完（不是 5 小时限额）" : "5 小时 / 每周额度用完")
+                        InfoRow("撞限类型", s.creditsOnly(store.now) ? "空间 credits 用完（不是 5 小时限额）"
+                                : s.usage.limitType == "workspace_owner_credits_depleted" ? "5 小时 / 每周额度用完，空间也没有 credits 续用"
+                                : "5 小时 / 每周额度用完")
                     }
                     if !s.usage.blockReason.isEmpty { InfoRow("暂时跳过", s.usage.blockReason) }
                     if !s.usage.error.isEmpty { InfoRow("最近查询", s.usage.error) }

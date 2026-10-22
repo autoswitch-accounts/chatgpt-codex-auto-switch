@@ -165,7 +165,8 @@ final class Store: ObservableObject {
 
     /// 下一个会被自动切到的账号（和守护进程同一套规则，只看缓存，不联网）
     func nextSlot() -> Slot? {
-        guard let i = slots.firstIndex(where: { $0.current }) else { return slots.first { $0.usable(now) } }
+        let candidate = { (s: Slot) in s.usable(self.now) && !self.skipped(s) }
+        guard let i = slots.firstIndex(where: { $0.current }) else { return slots.first(where: candidate) }
         var order = Array(slots[(i + 1)...] + slots[..<i])
         // 和守护进程一样要稳定排序（同分保持字母序）；Swift 的 sort 不保证稳定，带上原位置
         if config.order == "most" || config.order == "soon" {
@@ -176,7 +177,18 @@ final class Store: ObservableObject {
                 return x != y ? x < y : a.offset < b.offset
             }.map(\.element)
         }
-        return order.first { $0.usable(now) }
+        return order.first(where: candidate)
+    }
+
+    /// 这个账号设成了「不参与轮换」：自动切号不会切到它
+    func skipped(_ s: Slot) -> Bool { config.skip.contains(s.slot) }
+
+    func setSkipped(_ s: Slot, _ on: Bool) {
+        var l = config.skip.filter { $0 != s.slot }
+        if on { l.append(s.slot) }
+        config.skip = l.sorted()
+        let json = (try? JSONEncoder().encode(config.skip)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        setConfig("skip", json)
     }
 
     // MARK: 额度 / 目录 / 设置

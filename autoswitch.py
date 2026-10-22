@@ -644,7 +644,9 @@ class Daemon:
             return None, None
         i = sl.index(self.cur) if self.cur in sl else -1
         order = sl[i + 1:] + sl[:i + 1] if i >= 0 else sl
-        how = eng.load_config()["order"]
+        cfg = eng.load_config()
+        how = cfg["order"]
+        order = [s for s in order if s == self.cur or s not in cfg["skip"]]   # 不参与轮换的不切过去；当前就在它上面时照常留着
         if how in ("most", "soon"):
             q = eng.load_quota()
             key = (lambda s: -remaining(q.get(s), now)) if how == "most" else (lambda s: next_reset(q.get(s), now))
@@ -710,7 +712,9 @@ class Daemon:
     def switch_to(self, slot, now, reason):
         log(f"{reason} → 切到槽 {slot}")
         self.st["wait"] = None
-        ok, r = eng.switch(slot)
+        quiet = eng.load_config()["quiet_switch"]
+        front = eng.frontmost() if quiet else ""     # 切号前用户在用的 App，ChatGPT 起来后把焦点还给它
+        ok, r = eng.switch(slot, background=quiet)
         if not ok:
             log(f"切号失败：{r.get('err')}")
             notify(f"自动切号失败：{r.get('err')}", "critical")
@@ -718,7 +722,7 @@ class Daemon:
             return
         self.cur = slot
         self.st["last_switch_at"] = time.time()
-        self.st["switching"] = {"to": slot, "at": time.time()}
+        self.st["switching"] = {"to": slot, "at": time.time(), "front": front}
         self.last_cur_usage = 0
         self.tracker.forget_turns()          # 旧 App 里的轮次已随重启结束
         log(f"已切到槽 {slot}（{r.get('email')}），等待 ChatGPT 就绪")
@@ -777,6 +781,8 @@ class Daemon:
                 sw.setdefault("bus_at", now)   # 总线刚通，窗口可能还没建好，缓几秒
                 return False
             log(f"ChatGPT 已就绪（切号后 {now - sw['at']:.0f} 秒）")
+            if eng.step_back(sw.get("front")):
+                log("ChatGPT 启动后跳到了最前面，已隐藏，回到切号前的窗口")
             self.st["switching"] = None
         return True
 
@@ -819,9 +825,16 @@ class Daemon:
                 if not bus.owned(tid):
                     if now - item["linked"] >= DEEPLINK_EVERY:
                         item["linked"] = now
-                        subprocess.run(["/usr/bin/open", f"codex://threads/{tid}"],
+                        # 后台切号：深链也不抢前台（手动切号时勾选的续答照旧跳过去给人看）
+                        quiet = cfg["quiet_switch"] and not item.get("manual")
+                        front = eng.frontmost() if quiet else ""
+                        subprocess.run(["/usr/bin/open"] + (["-g"] if quiet else []) + [f"codex://threads/{tid}"],
                                        capture_output=True, timeout=10)
-                        log(f"App 还没打开对话 {tid[:8]}…，已发深链")
+                        log(f"App 还没打开对话 {tid[:8]}…，已{'在后台' if quiet else ''}发深链")
+                        if quiet:
+                            time.sleep(1.5)          # 等 ChatGPT 处理完深链，看它有没有自己跳到前面
+                            if eng.step_back(front):
+                                log("ChatGPT 打开对话时跳到了最前面，已隐藏，回到原来的窗口")
                     return
                 ok, err = bus.start_turn(tid, cfg["prompt"])
         except (OSError, ConnectionError) as e:

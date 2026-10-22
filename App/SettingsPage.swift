@@ -45,6 +45,12 @@ struct SettingsPage: View {
                 Toggle("", isOn: Binding(get: { store.config.enabled }, set: { store.setAuto($0) }))
                     .toggleStyle(SwitchStyle()).labelsHidden()
             }
+            SettingRow("后台切号，不打扰", "自动切号和续答都在后台进行：ChatGPT 重启后不抢到最前面，也不跳到被续答的对话，"
+                       + "你手上的窗口保持不动。你在这里手动切号时照常把 ChatGPT 叫到前台") {
+                Toggle("", isOn: Binding(get: { store.config.quiet_switch },
+                                         set: { store.config.quiet_switch = $0; store.setConfig("quiet_switch", $0 ? "true" : "false") }))
+                    .toggleStyle(SwitchStyle()).labelsHidden()
+            }
             SettingRow("切号顺序", orderHint) {
                 Picker("", selection: Binding(get: { store.config.order },
                                               set: { store.config.order = $0; store.setConfig("order", "\"\($0)\"") })) {

@@ -43,8 +43,9 @@ it switches to the next available one and sends "continue" in every conversation
 
 | | |
 |---|---|
-| 🔄 **Auto-switch & resume** | Switches to the next usable account when the limit is hit (alphabetical, soonest reset first, or most remaining), then sends "continue" in the interrupted conversations |
-| 📊 **Quota at a glance** | 5-hour and weekly remaining quota, reset times and blocking reasons for every account |
+| 🔄 **Auto-switch & resume** | Switches to the next usable account when the limit is hit, then sends "continue" in the interrupted conversations — quietly in the background, without pulling ChatGPT to the front |
+| 🧭 **Switching rules** | Pick the next account alphabetically, soonest reset first, or most remaining; keep an account out of the rotation with "skip rotation" |
+| 📊 **Quota at a glance** | 5-hour and weekly remaining quota, reset times and when each exhausted account comes back |
 | ▶️ **Keep going** | When the model stops on its own (not a limit), send "continue" automatically — capped per conversation |
 | ⏱ **Start the clock** | Start an unused account's 5-hour window now, so it has reset by the time you need it — or let the service do it for every account |
 | 🎟 **Reset credits** | Lists free limit-reset credits and their expiry; use one with a confirmation |
@@ -56,8 +57,9 @@ it switches to the next available one and sends "continue" in every conversation
 
 Plus the small things: hover a bar on the overview chart for that account's details; the auto-switch card shows the current
 and the next account; right-click an account to switch, refresh, use a reset credit, start the clock, copy, rename or delete;
-an inspector with subscription, seats, role, 2FA and credits; CSV export of members; undo for "paid"; light / dark / system
-appearance and keep-on-top; and after the service restarts it catches up on conversations that hit a limit in the last 30 minutes.
+an inspector with subscription, seats, role, 2FA and credits; the account table splits into "in rotation" and "skipped" groups;
+CSV export of members; undo for "paid"; light / dark / system appearance and keep-on-top; and after the service restarts
+it catches up on conversations that hit a limit in the last 30 minutes.
 
 <table>
   <tr>
@@ -105,7 +107,38 @@ git clone https://github.com/autoswitch-accounts/chatgpt-codex-auto-switch.git &
 scripts/demo.sh
 ```
 
+## First run
+
+1. Click **＋** to add an account. A clean ChatGPT window opens; log in and pick the workspace, and the credentials are
+   captured into a slot (A, B, C…). Every account / team workspace gets its own slot. Adding quits ChatGPT first,
+   so do it when nothing is running.
+2. The background service installs itself (starts at login) and handles watching quota, switching and resuming.
+3. Click *Sync* once to pull teams, subscriptions and members; after that it syncs every 30 minutes.
+
 ## FAQ
+
+<details>
+<summary><b>Why does ChatGPT restart when switching?</b></summary>
+
+The desktop app is signed into one account at a time. A switch saves the current credentials, quits ChatGPT, swaps in the
+target account's credentials and its own browser profile, and reopens it. Automatic switches happen in the background by
+default: ChatGPT doesn't jump to the front or to the resumed conversation. Turn off *quiet switching* in Settings to watch it.
+</details>
+
+<details>
+<summary><b>Why does adding an account quit ChatGPT?</b></summary>
+
+The app's web session lives in each slot's browser profile, while Codex's credentials live in `~/.codex/auth.json`; the two
+must belong to the same account. Logging in needs a clean window on the new slot's profile, and only one ChatGPT runs at a time,
+so running conversations are interrupted. Add accounts when nothing is running.
+</details>
+
+<details>
+<summary><b>What does "Start the clock" do? Does it use quota?</b></summary>
+
+The 5-hour window only starts when an account is first used. Starting it early sends one tiny request (almost no quota), so the
+window is already close to resetting when you need the account. The service can do this for every account automatically.
+</details>
 
 <details>
 <summary><b>Does it upload my account data anywhere?</b></summary>
