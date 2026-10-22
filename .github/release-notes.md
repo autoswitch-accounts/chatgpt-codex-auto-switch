@@ -4,13 +4,10 @@
 `xattr -dr com.apple.quarantine "/Applications/ChatGPT 账号.app"`。
 
 ### 本版更新
-- 会话页：每个对话可以**后台继续 / 暂停**，行首勾选、表头全选后批量操作，不用切到 ChatGPT
-- 会话页：单独或批量**改模型、推理强度、速度**，当前值打勾，选项和叫法跟 ChatGPT 自己的菜单一致
-- 撞限后先等同账号上还在跑的对话自己做完再切号，不再把它们打断
-- 切号后续答直接排进 ChatGPT 的待发队列、在后台唤醒，几秒就接着跑
-- 在本 App 暂停的对话单独标出，自动续答会跳过它；会话默认按最后活动排序
-- Cloudflare 拦截团队 / 订阅 / 成员接口时，改用内置浏览器内核去取
-- 团队页可以移除已停用的空间；侧栏卡片显示完整邮箱和额度进度条；成员、日志页更宽松；弹窗配色统一
+- **英文界面**：设置 → 窗口 → 语言（跟随系统 / 中文 / English），切换后 App 自动退出再重开；消息中心、日志里以前写下的中文也按当前语言显示
+- **重置券按账号（空间）分开**：同一个邮箱在不同团队空间里的券各是各的，详情、表格、确认弹窗都按槽位显示；修好了在第二个空间点「重置」提示失败（no_credit）的问题
+- 默认续答用语跟着语言走（中文「继续」/ English "Continue"），自己改过的不动
+- 会话页：模型列对齐，各列收紧，操作列不再超出窗口
 
 ### 功能
 - 额度用完自动切号，并在被打断的对话里自动发「继续」
@@ -18,9 +15,10 @@
 - 回合结束后自动继续（默认关，每个对话有次数上限）
 - 自动开始计时：5 小时窗口还没开始的账号由后台逐个起算（默认关）
 - 额度、重置券、团队订阅、成员交费台账、会话管理、消息中心
+- 中文 / English 界面
 
 ---
 
 Download the zip, unzip, and drag the app into Applications (macOS 14+, Apple silicon). The build is ad-hoc signed and not notarized — see the README for first-launch steps.
 
-New in this release: continue / pause conversations from the Sessions page (one at a time or a checked batch) without switching to ChatGPT; change model, reasoning effort and speed per conversation or in bulk; wait for running conversations to finish before switching accounts; background resume through ChatGPT's own queue; WebKit fallback when Cloudflare blocks team data.
+New in this release: an English UI (Settings → Window → Language; the app relaunches itself, and older notices and logs are shown in the current language); reset credits tracked per account/workspace, fixing the "no_credit" failure when the same email sits in two workspaces; the default resume prompt follows the language; tidier Sessions columns.
