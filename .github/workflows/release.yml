@@ -1,0 +1,22 @@
+# 推送 v* 标签时在 GitHub 的 macOS 机器上编译、打包并发布（发布人显示为 github-actions）
+#   git tag v5.2 && git push origin v5.2
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: macos-26          # 界面用到 macOS 26 SDK（Liquid Glass），要 Xcode 26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: VERSION="${GITHUB_REF_NAME#v}" scripts/package.sh
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ZIP=$(ls dist/*.zip)
+          { cat .github/release-notes.md; echo; echo "SHA-256: \`$(shasum -a 256 "$ZIP" | cut -d' ' -f1)\`"; } > notes.md
+          gh release create "$GITHUB_REF_NAME" "$ZIP" --title "$GITHUB_REF_NAME" --notes-file notes.md

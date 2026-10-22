@@ -1,0 +1,9 @@
+build/
+/ChatGPTAccounts
+dist/
+__pycache__/
+.DS_Store
+*.bak-*
+thread-autoassign.last-good.json
+# 本机签名证书（见 build.sh），不进仓库
+signing.local
