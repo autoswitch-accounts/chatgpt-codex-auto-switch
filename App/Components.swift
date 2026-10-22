@@ -26,7 +26,9 @@ enum Palette {
     static let line    = Color(nsColor: .separatorColor)
     static let track   = Color(nsColor: .quaternaryLabelColor)
     static let fill    = Color(nsColor: .quaternaryLabelColor).opacity(0.5)
-    static let raised  = Color(nsColor: .quaternaryLabelColor).opacity(0.35)
+    /// 弹窗里的内容块：铺在 PageBackground 上，和概览页的卡片一样偏白（深色下偏深灰）
+    // 弹窗里的小块底色：在页面底色上压一层很淡的灰，不用白底（白底和弹窗的页面底色对不上）
+    static let raised  = Color.primary.opacity(0.045)
 
     /// 剩余百分比对应的颜色
     static func quota(_ left: Double) -> Color {
@@ -229,15 +231,18 @@ struct Avatar: View {
 struct Pill: View {
     let text: String
     var color: Color = Palette.gray
+    /// false：放不下时截断成「…」（表格窄列用），不撑出去压到旁边的列
+    var fit = true
     @Environment(\.backgroundProminence) private var prominence
     var body: some View {
         let onSelected = prominence == .increased
         Text(text)
             .font(.system(size: 10.5, weight: .semibold))
+            .lineLimit(1).truncationMode(.tail)
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(Capsule().fill(onSelected ? Color.white.opacity(0.25) : color.opacity(0.15)))
             .foregroundStyle(onSelected ? Color.white : color)
-            .fixedSize()
+            .fixedSize(horizontal: fit, vertical: true)
     }
 }
 

@@ -30,7 +30,7 @@ struct LogsPage: View {
                 Text("\(rows.count) 条 · 每 4 秒自动刷新").font(.caption).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
-            List(rows) { l in LogRow(l: l) }
+            List(rows) { l in LogRow(l: l).padding(.vertical, 5) }
                 .listStyle(.inset(alternatesRowBackgrounds: false))
                 .scrollContentBackground(.hidden)
                 .textSelection(.enabled)
@@ -53,16 +53,18 @@ struct LogRow: View {
     var body: some View {
         let tone = LogRow.tone(l.text)
         HStack(alignment: .firstTextBaseline, spacing: 10) {
+            // 日志页字号放大、行距放宽；概览里的精简版（compact）保持原来的小字
             Text(compact ? String(l.time.dropFirst(5)) : l.time)
-                .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-                .frame(width: compact ? 90 : 128, alignment: .leading)
+                .font(.system(size: compact ? 11 : 12.5).monospacedDigit()).foregroundStyle(.secondary)
+                .frame(width: compact ? 90 : 150, alignment: .leading)
             Text(l.source.rawValue)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: compact ? 10 : 11.5, weight: .medium))
                 .foregroundStyle(l.source == .auto ? Palette.purple : Palette.gray)
-                .frame(width: 50, alignment: .leading)
-            Circle().fill(tone ?? .clear).frame(width: 6, height: 6)
+                .frame(width: compact ? 50 : 64, alignment: .leading)
+            Circle().fill(tone ?? .clear).frame(width: 7, height: 7)
             Text(l.text)
-                .font(.callout).foregroundStyle(tone == Palette.red ? Palette.red : Palette.text)
+                .font(compact ? .callout : .system(size: 14)).lineSpacing(compact ? 0 : 3)
+                .foregroundStyle(tone == Palette.red ? Palette.red : Palette.text)
                 .lineLimit(compact ? 1 : nil)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

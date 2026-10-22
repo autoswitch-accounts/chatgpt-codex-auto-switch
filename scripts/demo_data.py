@@ -289,12 +289,15 @@ def iso(t):
     return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def rollout(title, project, last, events, parent=None, tid=None):
+def rollout(title, project, last, events, parent=None, tid=None, cfg=("gpt-6.1-sol", "high", "default")):
     tid = tid or str(uuid.uuid4())
     meta = {"id": tid, "cwd": f"/Users/demo/Projects/{project}"}
     if parent:
         meta["parent_thread_id"] = parent
     lines = [{"timestamp": iso(last - 600), "type": "session_meta", "payload": meta}]
+    if not parent:                       # 主对话带上模型 / 推理强度 / 速度
+        lines.append({"timestamp": iso(last - 599), "type": "event_msg", "payload": {"type": "thread_settings_applied",
+                      "thread_settings": dict(zip(("model", "reasoning_effort", "service_tier"), cfg))}})
     for dt, typ, extra in events:
         lines.append({"timestamp": iso(last - dt), "type": "event_msg", "payload": {"type": typ, **extra}})
     path = os.path.join(sess_dir, f"rollout-{time.strftime('%Y-%m-%dT%H-%M-%S', time.localtime(last - 600))}-{tid}.jsonl")
@@ -314,15 +317,18 @@ main = rollout("落地页改版：首屏动效", "landing-page", NOW - 50,
 rollout("", "landing-page", NOW - 80, [(200, "task_started", {"turn_id": "s1"})], parent=main)
 rollout("", "landing-page", NOW - 400, [(200, "task_started", {"turn_id": "s2"}), (100, "task_complete", {})], parent=main)
 rollout("API 网关限流重构", "api-gateway", NOW - 6 * 60,
-        [(900, "task_started", {"turn_id": "t1"}), (0, "task_complete", {})])
+        [(900, "task_started", {"turn_id": "t1"}), (0, "task_complete", {})], cfg=("gpt-6.1-sol", "xhigh", "priority"))
 rollout("修复 iOS 推送证书过期", "mobile-app", NOW - 47 * 60,
         [(300, "task_started", {"turn_id": "t1"}), (0, "task_complete", limit_err)])
 rollout("周报数据看板", "analytics", NOW - 3.2 * H,
-        [(1200, "task_started", {"turn_id": "t1"}), (0, "task_complete", {})])
-rollout("数据库迁移脚本", "backend", NOW - 6.5 * H,
-        [(500, "task_started", {"turn_id": "t1"}), (0, "turn_aborted", {})])
+        [(1200, "task_started", {"turn_id": "t1"}), (0, "task_complete", {})], cfg=("gpt-6-luna", "medium", "default"))
+paused = rollout("数据库迁移脚本", "backend", NOW - 6.5 * H,
+                 [(500, "task_started", {"turn_id": "t1"}), (0, "turn_aborted", {})])
+st = eng.read_json(eng.STATE, {})
+st["paused"] = {paused: NOW - 6.5 * H}          # 在会话页点过「暂停」：显示「本 App 暂停」
+eng.write_json(eng.STATE, st)
 rollout("README 中英文对照", "docs", NOW - 20 * H,
-        [(700, "task_started", {"turn_id": "t1"}), (0, "task_complete", {})])
+        [(700, "task_started", {"turn_id": "t1"}), (0, "task_complete", {})], cfg=("gpt-6-luna", "low", "priority"))
 with open(os.path.join(codex, "session_index.jsonl"), "w", encoding="utf-8") as f:
     f.writelines(json.dumps(t, ensure_ascii=False) + "\n" for t in titles)
 

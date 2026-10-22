@@ -10,8 +10,12 @@
   --refresh-usage [X ...]    联网刷新额度，不带槽位就刷新全部
   --set-auto on|off          自动切号开关
   --set-config 键 JSON值      改设置（enabled / prompt / stall_nudge / order / auto_start / auto_continue / continue_max / quiet_switch）
-  --resume 对话id ...        请守护进程在这些对话里发一句「继续」
+  --resume 对话id ...        请守护进程在这些对话里发一句「继续」（打开对话）
+  --continue 对话id ...      同上，但在后台跑：排进 ChatGPT 的待发队列再唤醒，不切到 ChatGPT
+  --pause 对话id ...         停下这些对话正在跑的这一轮（守护进程经总线停），并移出续答队列
+  --set-thread JSON          改对话的模型 / 推理强度 / 速度：{"threads": [...], "settings": {"model", "effort", "tier"}}
   --directory-json [--refresh]  空间、订阅（续费 / 到期 / 席位）、成员、重置券（全部走接口）
+  --hide-team / --unhide-team 空间id  团队页里移除 / 恢复一个空间（只改本机显示）
   --notices-json             消息中心
   --notice-read [id ...]     标为已读（不带 id 就是全部）
   --ensure-daemon            安装 / 更新并启动守护进程（launchd）
@@ -24,7 +28,7 @@
   添加账号流程：--next-slot / --auto-begin X / --current-json / --capture / --relaunch X
 """
 import os, sys, json, base64, shutil, subprocess, time, datetime, fcntl, contextlib
-import re, uuid, bisect, calendar
+import re, uuid, bisect, calendar, select, threading
 import urllib.request, urllib.error
 
 # ---------- 路径常量 ----------
@@ -38,6 +42,7 @@ CONFIG   = os.path.join(P, "autoswitch.json")
 STATE    = os.path.join(P, "daemon_state.json")
 REQUEST  = os.path.join(P, "resume_request.json")
 DIRECTORY = os.path.join(P, "directory.json")
+HIDDEN_TEAMS = os.path.join(P, "hidden_teams.json")   # 团队页里手动移除的（已停用的）空间 id，只是不显示
 NOTICES  = os.path.join(P, "notices.json")
 META     = os.path.join(P, "meta.json")              # 成员台账：微信名、手动交费日
 HISTORY  = os.path.join(P, "switch_history.json")    # 切号历史，用来推断对话跑在哪个账号
@@ -122,7 +127,11 @@ def jwt_exp(tok):
 
 
 def info(path):
-    """从 auth.json 解出 {acct, email, plan, days}；解析失败返回 None"""
+    """从 auth.json 解出 {acct, user, email, plan, days}；解析失败返回 None
+
+    acct 是 workspace id，user 是登录的那个人：同一个团队空间里的不同成员 acct 相同、user 不同，
+    所以「是不是同一个账号」要两个都比（见 same_account）。
+    """
     try:
         tok = read_json(path, {})["tokens"]
         c = jwt_claims(tok["id_token"])
@@ -137,6 +146,7 @@ def info(path):
                 days = -1
         return {
             "acct":  tok.get("account_id") or a.get("chatgpt_account_id"),
+            "user":  a.get("chatgpt_user_id") or a.get("user_id") or c.get("sub") or (c.get("email") or "").lower(),
             "email": c.get("email"),
             "plan":  a.get("chatgpt_plan_type"),
             "days":  days,          # 订阅剩余天数，-1 表示未知
@@ -185,13 +195,21 @@ def mark_exit(slot):
         pass
 
 
-def find_slot(acct):
-    """按 account_id 找槽位（workspace 级精确匹配）"""
-    if not acct:
+def same_account(a, b):
+    """两份凭证是不是同一个账号：同一个 workspace 且同一个人。
+
+    以前只比 workspace id，同一个团队空间里的两个成员会被当成同一个：添加第二个成员时报
+    「已在槽位 X」、当前账号标错，切号时还会把新成员的凭证存回别人的槽位。
+    """
+    return bool(a and b and a.get("acct") and a["acct"] == b.get("acct") and a.get("user") == b.get("user"))
+
+
+def find_slot(who):
+    """按凭证（info() 的结果）找它所在的槽位：workspace 和人都要对上"""
+    if not who or not who.get("acct"):
         return None
     for s in slots():
-        i = info(slot_path(s))
-        if i and i["acct"] == acct:
+        if same_account(info(slot_path(s)), who):
             return s
     return None
 
@@ -199,7 +217,7 @@ def find_slot(acct):
 def current_slot():
     """auth.json 当前对应的槽位，对不上返回 None"""
     cur = info(AUTH)
-    return find_slot(cur["acct"]) if cur else None
+    return find_slot(cur)
 
 
 def udd_for(slot):
@@ -283,15 +301,26 @@ def frontmost():
         return ""
 
 
-def step_back(prev):
-    """后台切号 / 深链之后，ChatGPT 自己跳到了最前面、而之前用户在用的不是它：把它隐藏，
-    焦点自然回到之前那个 App。之前就在用 ChatGPT（或取不到）就不动。返回是否隐藏了"""
-    if not prev or prev == CHATGPT_ID or frontmost() != CHATGPT_ID or not os.access(APP_BIN, os.X_OK):
+def give_back(prev, seconds):
+    """后台切号 / 深链之后的 seconds 秒内盯着前台：ChatGPT 一跳到最前面（它启动、打开对话时会自己
+    show + focus 窗口，open -g 拦不住），就把焦点还给之前用户在用的 prev。
+
+    只还一次：之后用户自己点 ChatGPT 不能再被拽走。还焦点而不是隐藏 ChatGPT：隐藏会让它的窗口
+    整个消失，看起来像「一会切过来一会又没了」。返回是否还过焦点。"""
+    if not prev or prev == CHATGPT_ID or not os.access(APP_BIN, os.X_OK):
         return False
-    try:
-        return subprocess.run([APP_BIN, "--hide-app", CHATGPT_ID], capture_output=True, timeout=10).returncode == 0
-    except Exception:
-        return False
+    end = time.time() + seconds
+    while time.time() < end:
+        if frontmost() == CHATGPT_ID:
+            try:
+                r = subprocess.run([APP_BIN, "--activate-app", prev], capture_output=True, timeout=10)
+                if r.returncode != 0:          # 原来的 App 已经退出了：退一步把 ChatGPT 藏起来
+                    subprocess.run([APP_BIN, "--hide-app", CHATGPT_ID], capture_output=True, timeout=10)
+            except Exception:
+                return False
+            return True
+        time.sleep(0.15)
+    return False
 
 
 def backup_auth():
@@ -307,8 +336,7 @@ def backup_auth():
 
 def stash_current():
     """把当前凭证存回它所属的槽，保住 App 运行期间刷新过的 token"""
-    cur = info(AUTH)
-    s = find_slot(cur["acct"]) if cur else None
+    s = find_slot(info(AUTH))
     if s:
         shutil.copy2(AUTH, slot_path(s))
 
@@ -393,12 +421,12 @@ def switch(slot, force=False, background=False):
     if not want:
         return False, {"err": f"槽位 {slot} 不存在或凭证损坏，建议删掉重新添加"}
     cur = info(AUTH)
-    if running() and cur and cur["acct"] == want["acct"] and not force:
+    if running() and same_account(cur, want) and not force:
         if not background:
             activate()
         return True, {"email": want["email"], "activated": True}
 
-    prev = find_slot(cur["acct"]) if cur else None
+    prev = find_slot(cur)
     if not quit_app():
         return False, {"err": "ChatGPT 没能退出，请手动 Cmd+Q 后重试"}
     # 退出之后再存回：App 退出前可能刚刷新过 token
@@ -499,6 +527,24 @@ def _window(w):
             "window": int(w.get("limit_window_seconds") or 0)}
 
 
+def split_windows(a, b):
+    """服务端给的两个额度窗口 → (5 小时那个, 每周那个)，按窗口长度分，不按位置。
+
+    大多数套餐 primary 是 5 小时、secondary 是每周；但有的套餐（比如 self_serve_business_prolite）
+    没有 5 小时限额，只有每周额度，它会出现在 primary 位置上，按位置读就把每周当成了 5 小时。
+    长度未知的窗口按原来的位置算。"""
+    short = long_ = None
+    for pos, w in enumerate((a, b)):
+        if not w:
+            continue
+        n = w.get("window") or 0
+        if (n > 86400 if n else pos == 1):
+            long_ = long_ or w
+        else:
+            short = short or w
+    return short, long_
+
+
 def slot_token(slot):
     """某槽可用的 access_token → (token, account_id, 错误说明)
 
@@ -508,7 +554,7 @@ def slot_token(slot):
     """
     src = slot_path(slot)
     want, cur = info(src), info(AUTH)
-    if want and cur and want["acct"] == cur["acct"]:
+    if same_account(want, cur):
         src = AUTH
     tok = (read_json(src, {}) or {}).get("tokens") or {}
     at = tok.get("access_token") or ""
@@ -575,10 +621,11 @@ def fetch_usage(slot):
     except Exception as e:
         return merge_quota(slot, {"error": f"网络错误 {type(e).__name__}", "error_at": now})
     rl = d.get("rate_limit") or {}
+    short, week = split_windows(_window(rl.get("primary_window")), _window(rl.get("secondary_window")))
     return merge_quota(slot, {
         "at": now, "src": "api",
-        "primary": _window(rl.get("primary_window")),
-        "secondary": _window(rl.get("secondary_window")),
+        "primary": short,                  # 5 小时窗口；没有 5 小时限额的套餐为 None
+        "secondary": week,
         "reached": bool(rl.get("limit_reached")) or rl.get("allowed") is False,
         # 撞限类型：rate_limit_reached = 5 小时 / 每周额度；workspace_owner_credits_depleted = 空间 credits 用完
         "limit_type": (d.get("rate_limit_reached_type") or {}).get("type") or "",
@@ -863,11 +910,102 @@ def load_directory():
     return read_json(DIRECTORY, {"at": 0, "people": [], "workspaces": [], "errors": []})
 
 
+# ---------- Cloudflare 拦截时借 App 里的 WebKit 发请求 ----------
+#
+# 2026-10-21 起 chatgpt.com 对非浏览器客户端的 accounts/*、subscriptions 一律返回 Cloudflare 验证页
+# （403 + cf-mitigated: challenge），换 UA 也不行；me、wham/* 不受影响。浏览器里同样的请求能过，
+# 所以被拦时改由 `ChatGPTAccounts --web-fetch` 在不显示的 WKWebView 里发（协议见 App/WebFetch.swift）。
+# 一次同步里只起一个这样的进程，同步完关掉。
+_web = {"proc": None, "failed": False, "cf_until": 0, "n": 0}      # n：这次同步里经 WebKit 取到的请求数
+_web_lock = threading.Lock()
+
+
+def _web_start():
+    """起 WebKit 助手，等它打开 chatgpt.com；失败返回 None 并记下这次同步不再试"""
+    p = _web["proc"]
+    if p and p.poll() is None:
+        return p
+    if _web["failed"] or DEMO or not os.access(APP_BIN, os.X_OK):
+        return None
+    try:
+        p = subprocess.Popen([APP_BIN, "--web-fetch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        r = _web_line(p, 50)
+        if r and r.get("ready"):
+            _web["proc"] = p
+            return p
+        log(f"WebKit 取数据没起来：{(r or {}).get('error') or '没有响应'}")
+        p.kill()
+    except Exception as e:
+        log(f"WebKit 取数据没起来：{type(e).__name__}")
+    _web["failed"] = True
+    return None
+
+
+def _web_line(p, timeout):
+    """读助手的一行 JSON，超时 / 退出返回 None"""
+    if not select.select([p.stdout], [], [], timeout)[0]:
+        return None
+    line = p.stdout.readline()
+    try:
+        return json.loads(line) if line else None
+    except ValueError:
+        return None
+
+
+def web_get(path, token, acct):
+    """借 WebKit GET backend-api/<path> → (数据, 错误文字)；助手不可用返回 (None, None)"""
+    with _web_lock:
+        p = _web_start()
+        if not p:
+            return None, None
+        try:
+            p.stdin.write(json.dumps({"path": path, "token": token, "acct": acct}) + "\n")
+            p.stdin.flush()
+            r = _web_line(p, 30)
+        except Exception:
+            r = None
+        if r is None:
+            p.kill()
+            _web["proc"] = None
+            return None, "WebKit 无响应"
+    if r.get("status") == 200:
+        try:
+            d = json.loads(r.get("body") or "")
+            _web["n"] += 1
+            return d, ""
+        except ValueError:
+            return None, "WebKit 返回的不是 JSON"
+    return None, f"HTTP {r.get('status')}（WebKit）" if r.get("status") else f"WebKit：{r.get('body')}"
+
+
+def web_close():
+    with _web_lock:
+        p, _web["proc"], _web["failed"], _web["n"] = _web["proc"], None, False, 0
+    if p:
+        try:
+            p.stdin.close()
+            p.wait(5)
+        except Exception:
+            p.kill()
+
+
 def _get(path, token, acct):
-    """backend_get，失败返回 (None, 错误文字)"""
+    """backend_get，失败返回 (None, 错误文字)。被 Cloudflare 拦了就改用 WebKit，
+    之后 10 分钟里非 wham 接口直接走 WebKit（反正会被拦，省一次必定失败的请求）"""
+    if time.time() < _web["cf_until"] and not path.startswith("wham/"):
+        d, err = web_get(path, token, acct)
+        if err is not None:
+            return d, err
     try:
         return backend_get(path, token, acct), ""
     except urllib.error.HTTPError as e:
+        if e.code == 403 and e.headers.get("cf-mitigated"):
+            _web["cf_until"] = time.time() + 600
+            d, err = web_get(path, token, acct)
+            if err is not None:
+                return d, err
+            return None, "被 Cloudflare 拦截（HTTP 403）"
         return None, f"HTTP {e.code}"
     except Exception as e:
         return None, type(e).__name__
@@ -923,6 +1061,14 @@ def _members(wid, token):
 
 
 def sync_directory():
+    """见 _sync_directory；无论成败，同步完都关掉可能起了的 WebKit 助手"""
+    try:
+        return _sync_directory()
+    finally:
+        web_close()
+
+
+def _sync_directory():
     """联网拉一遍全部账号的空间、订阅、成员、重置券，写进 directory.json 并更新消息中心
 
     chatgpt.com 的 Cloudflare 对非浏览器客户端时不时会拦一阵 accounts/*（403 网页），
@@ -1001,7 +1147,8 @@ def sync_directory():
                 "created": iso(acc.get("created_time")) or prev.get("created", 0),
                 "slots": mine.get(wid, []), "access": [],
                 "sub": _sub(ent, None) if ent is not None else prev.get("sub") or _sub(None, None),
-                "members": prev.get("members"), "invites": prev.get("invites", []),
+                "members": prev.get("members"), "membersAt": prev.get("membersAt", 0),
+                "invites": prev.get("invites", []),
                 "errors": [], "_tok": None, "_rank": 9})
             role = acc.get("account_user_role") or ""
             own = [x for x in mine.get(wid, []) if (info(slot_path(x)) or {}).get("email") == mail]
@@ -1009,6 +1156,11 @@ def sync_directory():
             rank = {"account-owner": 0, "account-admin": 1, "admin": 1}.get(role, 5)
             if rank < w["_rank"]:                 # 用权限最高的那个身份去查订阅和成员
                 w["_rank"], w["_tok"] = rank, r["token"]
+                # 空间的套餐也以它看到的为准：v4 里的 plan_type / 显示名是「这个人的席位」，
+                # 同一空间里 Pro Lite 席位的成员看到的是 self_serve_business_prolite / Business Premium
+                if acc.get("plan_type"):
+                    w["plan"] = acc["plan_type"]
+                    w["planName"] = acc.get("plan_display_name") or ""
 
     def per_ws(w):
         tok = w["_tok"]
@@ -1021,13 +1173,27 @@ def sync_directory():
             if not w["sub"]["billing"]:
                 w["sub"]["billing"] = s.get("billing_period") or ""
         elif team:
-            w["errors"].append(f"席位 {e}，沿用上次")
+            w["errors"].append(f"席位{e}，沿用上次")
         if team:
             m, e = _members(w["id"], tok)
             if m is None:
-                w["errors"].append(f"成员 {e}" + ("，沿用上次" if w["members"] is not None else ""))
+                at = w.get("membersAt") or 0
+                w["errors"].append(f"成员列表{e}，" + (
+                    f"沿用 {time.strftime('%m-%d %H:%M', time.localtime(at))} 的数据" if at
+                    else "沿用上次的数据" if w["members"] is not None else "暂时拿不到"))
+                # 拿不到成员列表时，至少把本机登录过这个空间的账号补进去（比如刚加入的人），
+                # 上次补的先去掉再按这次的 access 重补，人走了不会一直留着
+                ms = [x for x in w["members"] or [] if not x.get("local")]
+                have = {(x.get("email") or "").lower() for x in ms}
+                for a in w["access"]:
+                    if a["email"].lower() not in have:
+                        have.add(a["email"].lower())
+                        ms.append({"id": "local:" + a["email"].lower(), "email": a["email"], "name": "",
+                                   "role": a["role"], "seat": "", "joined": 0, "deactivatedAt": 0,
+                                   "local": True, "viaSlot": a.get("viaSlot") or ""})
+                w["members"] = ms
             else:
-                w["members"] = m
+                w["members"], w["membersAt"] = m, time.time()
             inv, e = _get(f"accounts/{w['id']}/invites?offset=0&limit=100&query=", tok, w["id"])
             if inv is not None:
                 w["invites"] = [{"email": i.get("email_address") or i.get("email") or "",
@@ -1051,7 +1217,8 @@ def sync_directory():
     new = add_notices(directory_notices(data, time.time())) + pay_notices(data)
     partial = sum(1 for w in out_ws if w["errors"])
     log(f"同步账号目录：{len(people)} 个邮箱、{len(out_ws)} 个空间，新消息 {len(new)} 条"
-        + (f"，{len(errors)} 个邮箱 / {partial} 个空间部分沿用上次数据" if errors or partial else ""))
+        + (f"，{len(errors)} 个邮箱 / {partial} 个空间部分沿用上次数据" if errors or partial else "")
+        + (f"（直连被 Cloudflare 拦，{_web['n']} 个请求改由 App 内置 WebKit 取到）" if _web["n"] else ""))
     return data, new
 
 
@@ -1529,7 +1696,7 @@ def api_list():
             "wechat":     wx.get((i.get("email") or "").lower(), ""),
             "acct":       i.get("acct") or "",
             "plan":       i.get("plan") or "",
-            "current":    bool(cur and i.get("acct") == cur["acct"]),
+            "current":    same_account(i, cur),
             "days":       i.get("days", -1),
             "lastExit":   lu.get(s, ""),
             "ok":         bool(i.get("acct")),
@@ -1557,7 +1724,14 @@ def api_directory(refresh):
     d = load_directory()
     if refresh or not d.get("at"):
         d, _ = sync_directory()
-    out({"ok": True, **with_meta(d)})
+    out({"ok": True, **with_meta(d), "hidden": read_json(HIDDEN_TEAMS, [])})
+
+
+def api_hide_team(wid, hide):
+    """团队页「从列表移除」/ 恢复：只改本机的显示，不动 ChatGPT 那边的空间"""
+    ids = [i for i in read_json(HIDDEN_TEAMS, []) if i != wid] + ([wid] if hide else [])
+    write_json(HIDDEN_TEAMS, ids)
+    out({"ok": True, "hidden": ids})
 
 
 def api_notices():
@@ -1579,6 +1753,39 @@ def api_resume(threads):
     out({"ok": True, "queued": threads})
 
 
+def api_continue(threads):
+    """会话页的「继续」：请守护进程马上在这些对话里后台发一句「继续」"""
+    with file_lock("request"):
+        req = read_json(REQUEST, []) + [{"thread": t, "bg": True} for t in threads]
+        write_json(REQUEST, req)
+    out({"ok": True, "queued": threads})
+
+
+def api_pause(threads):
+    """会话页的「暂停」：请守护进程停下这些对话正在跑的这一轮，并移出续答队列"""
+    if not threads:
+        return out({"ok": False, "err": "没有要暂停的对话"}, False)
+    with file_lock("request"):
+        req = read_json(REQUEST, []) + [{"thread": t, "pause": True} for t in threads]
+        write_json(REQUEST, req)
+    out({"ok": True, "queued": threads})
+
+
+def api_set_thread(arg):
+    """会话页改模型 / 推理强度 / 速度：交给守护进程经总线改（下一轮生效）"""
+    try:
+        d = json.loads(arg)
+        threads, settings = list(d["threads"]), {k: v for k, v in d["settings"].items() if k in ("model", "effort", "tier") and v}
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return out({"ok": False, "err": "参数格式不对"}, False)
+    if not threads or not settings:
+        return out({"ok": False, "err": "没有要改的对话或设置"}, False)
+    with file_lock("request"):
+        req = read_json(REQUEST, []) + [{"thread": t, "settings": settings} for t in threads]
+        write_json(REQUEST, req)
+    out({"ok": True, "queued": threads})
+
+
 def api_switch(slot, force):
     ok, r = switch(slot, force)
     out({"ok": ok, **r}, ok)
@@ -1593,7 +1800,7 @@ def api_auto_begin(slot):
     stash_current()
     backup_auth()
     if cur:
-        mark_exit(find_slot(cur["acct"]))
+        mark_exit(find_slot(cur))
     try:
         subprocess.run([CODEX, "logout"], capture_output=True, text=True, timeout=30)
     except Exception:
@@ -1610,17 +1817,20 @@ def api_next_slot():
 
 
 def api_relaunch(slot):
-    """收完凭证后由我们自己拉起 ChatGPT"""
-    launch(slot)
-    log(f"添加完成，拉起 ChatGPT（槽 {slot}）")
+    """添加完成：登录用的 ChatGPT 就是新槽位的，一般还开着，不动它；被关掉了才在后台拉起"""
+    if running():
+        log(f"添加完成（槽 {slot}），ChatGPT 已在运行")
+    else:
+        launch(slot, background=True)
+        log(f"添加完成，后台拉起 ChatGPT（槽 {slot}）")
     out({"ok": True})
 
 
 def api_current():
     """当前登录状态，供 UI 轮询登录是否完成"""
     cur = info(AUTH) or {}
-    out({"acct": cur.get("acct") or "", "email": cur.get("email") or "",
-         "plan": cur.get("plan") or "", "known": bool(find_slot(cur.get("acct")))})
+    out({"acct": cur.get("acct") or "", "user": cur.get("user") or "", "email": cur.get("email") or "",
+         "plan": cur.get("plan") or "", "known": bool(find_slot(cur))})
 
 
 def api_capture():
@@ -1628,9 +1838,9 @@ def api_capture():
     new = info(AUTH)
     if not new or not new["acct"]:
         out({"ok": False, "err": "没读到凭证，可能还没登录成功"}, False)
-    dup = find_slot(new["acct"])
+    dup = find_slot(new)
     if dup:
-        out({"ok": False, "err": f"这个 workspace 已在槽位 {dup}",
+        out({"ok": False, "err": f"{new['email']} 的这个 workspace 已在槽位 {dup}",
              "dup": dup, "email": new["email"]}, False)
     slot = next((c for c in SLOTPOOL if c not in set(slots())), None)
     if not slot:
@@ -1679,7 +1889,7 @@ def api_rename(slot, name):
 def api_delete(slot):
     """删除槽位（只删本机凭证），禁止删当前正在用的那个"""
     cur, i = info(AUTH), info(slot_path(slot))
-    if cur and i and i["acct"] == cur["acct"]:
+    if same_account(cur, i):
         out({"ok": False, "err": "不能删除当前正在使用的账号"}, False)
     if os.path.exists(slot_path(slot)):
         os.remove(slot_path(slot))
@@ -1694,7 +1904,7 @@ def api_delete(slot):
 
 # 演示模式下这些命令什么都不做，直接报成功：它们会联网、动 ChatGPT 进程或装后台服务
 DEMO_NOOP = {"--slot", "--refresh-usage", "--ensure-daemon", "--capture", "--auto-begin", "--relaunch",
-             "--reset-credit", "--start-window", "--resume"}
+             "--reset-credit", "--start-window", "--resume", "--continue", "--set-thread", "--pause"}
 
 
 def main():
@@ -1711,7 +1921,12 @@ def main():
     if cmd == "--set-auto":       return out({"ok": True, **set_config("enabled", a[1] == "on")})
     if cmd == "--set-config":     return out({"ok": True, **set_config(a[1], json.loads(a[2]))})
     if cmd == "--resume":         return api_resume(a[1:])
+    if cmd == "--continue":       return api_continue(a[1:])
+    if cmd == "--set-thread":     return api_set_thread(a[1] if len(a) > 1 else "")
+    if cmd == "--pause":          return api_pause(a[1:])
     if cmd == "--directory-json": return api_directory("--refresh" in a)
+    if cmd == "--hide-team":      return api_hide_team(a[1], True)
+    if cmd == "--unhide-team":    return api_hide_team(a[1], False)
     if cmd == "--notices-json":   return api_notices()
     if cmd == "--notice-read":    mark_notices(a[1:]); return out({"ok": True})
     if cmd == "--ensure-daemon":

@@ -13,10 +13,11 @@ struct AccountRow: Identifiable {
 
     var letter: String { s.slot }
     var email: String { s.email }
-    var space: String { ws?.displayName ?? s.title }
+    var space: String { ws?.shortName ?? s.title }
     /// 套餐名：去掉「ChatGPT」前缀、按量计费的缩短，套餐列很窄，长名字会压到旁边的额度列
     var plan: String {
-        guard let n = ws?.planName, !n.isEmpty else { return s.planLabel }
+        if let t = s.seatTier { return t }      // 套餐列窄：Pro Lite 席位直接写档位，空间是 Business 看悬停说明
+        guard let n = ws?.planTitle, !n.isEmpty else { return s.planLabel }
         return n.replacingOccurrences(of: "ChatGPT ", with: "")
             .replacingOccurrences(of: "Business Usage Based", with: "Business 按量")
     }
@@ -138,12 +139,21 @@ struct AccountsPage: View {
             }
             .width(min: 80, ideal: 120)
             TableColumn("套餐", value: \.plan) { r in
-                Pill(text: r.plan, color: r.ws?.isTeam == true || r.s.plan == "team" ? Palette.purple
-                     : (r.s.plan == "plus" || r.s.plan == "pro" ? Palette.teal : Palette.gray))
-                    .frame(maxWidth: .infinity, alignment: .leading).clipped()
+                Pill(text: r.plan, color: r.s.seatTier != nil ? Palette.orange
+                     : r.ws?.isTeam == true || r.s.plan == "team" ? Palette.purple
+                     : (r.s.plan == "plus" || r.s.plan == "pro" ? Palette.teal : Palette.gray), fit: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(r.s.seatTier.map { "\(r.ws?.planTitle ?? "Business") 空间里的 \($0) 席位，官方名 Business Premium（plan_type：\(r.s.plan)）" }
+                          ?? "plan_type：\(r.s.plan)")
             }
             .width(min: 70, ideal: 80)
-            TableColumn("5 小时", value: \.r5h) { r in QuotaCell(window: r.s.usage.primary, now: store.now) }
+            TableColumn("5 小时", value: \.r5h) { r in
+                if r.s.noFiveHour {
+                    Text("不限").foregroundStyle(.secondary).help("这个套餐没有 5 小时限额，只有每周额度")
+                } else {
+                    QuotaCell(window: r.s.usage.primary, now: store.now)
+                }
+            }
                 .width(min: 96, ideal: 104)
             TableColumn("5h 重置", value: \.reset5h) { r in
                 if let w = r.s.usage.primary, w.untouched, w.resetAt > store.now, !r.s.needsLogin {
@@ -290,8 +300,11 @@ struct AccountInspector: View {
                         Text(s.email).font(.headline).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                             .padding(.trailing, 30)
                         HStack(spacing: 5) {
-                            Pill(text: ws?.planName.isEmpty == false ? ws!.planName : s.planLabel, color: Palette.purple)
-                            Text(ws?.displayName ?? s.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            let base = ws?.planTitle.isEmpty == false ? ws!.planTitle : s.planLabel
+                            Pill(text: s.seatTier.map { "\(base) · \($0)" } ?? base,
+                                 color: s.seatTier != nil ? Palette.orange : Palette.purple)
+                                .help("这个账号的 plan_type：\(s.plan)")
+                            Text(ws?.shortName ?? s.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
                 }
@@ -322,7 +335,11 @@ struct AccountInspector: View {
                 }
 
                 group("额度") {
-                    BigQuota(label: "5 小时额度", window: s.usage.primary, now: store.now)
+                    if s.noFiveHour {
+                        InfoRow("5 小时额度", "不限（这个套餐只有每周额度）")
+                    } else {
+                        BigQuota(label: "5 小时额度", window: s.usage.primary, now: store.now)
+                    }
                     if let w = s.usage.primary, w.untouched, w.resetAt > store.now, !s.needsLogin {
                         Button { store.confirmStart = s } label: { Label("让 5 小时额度开始计时", systemImage: "timer") }
                             .glassButton().disabled(store.busy != nil)
@@ -400,11 +417,15 @@ struct AccountInspector: View {
                                 HStack {
                                     Image(systemName: c.status == "available" ? "ticket" : "ticket.fill")
                                         .foregroundStyle(c.status == "available" ? Palette.accent : Palette.text3)
-                                    Text(c.title.isEmpty ? "额度重置" : c.title).lineLimit(1)
+                                    // 接口给的标题像「Full reset (Weekly + 5 hr)」，括号里的说明下面那行小字已经写了
+                                    Text(c.title.isEmpty ? "额度重置"
+                                         : c.title.replacingOccurrences(of: #"\s*\([^()]*\)\s*$"#, with: "", options: .regularExpression))
+                                        .lineLimit(1)
                                     Spacer()
                                     let d = TimeText.daysLeft(c.expiresAt, now: store.now)
-                                    Text(c.status == "available" ? "\(TimeText.date(c.expiresAt).dropFirst(5)) 过期" : "已使用")
+                                    Text(c.status == "available" ? "\(TimeText.dayTime(c.expiresAt)) 过期" : "已使用")
                                         .monospacedDigit()
+                                        .help(TimeText.full(c.expiresAt))
                                         .foregroundStyle(c.status == "available" && d <= 3 ? Palette.orange : Palette.text2)
                                     if c.status == "available" {
                                         Button("使用") { store.confirmReset = ResetAsk(slot: s, credit: c) }
@@ -461,63 +482,95 @@ struct ResetSheet: View {
             return Line(s: s, credit: c, count: p.availableResets.count)
         }
         .sorted { min($0.s.remaining5h(store.now), $0.s.remainingWeek(store.now)) < min($1.s.remaining5h(store.now), $1.s.remainingWeek(store.now)) }
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("额度重置券").font(.title2.weight(.semibold))
-                    Text("用一张立即清空该账号的 5 小时和本周用量；同一邮箱下的槽位共用券。点「重置」后还会再确认一次。")
-                        .font(.callout).foregroundStyle(.secondary)
+        let total = store.directory.people.flatMap(\.availableResets).count
+        // 版式和「添加账号」弹窗一致：圆形图标 + 标题 + 说明，分隔线，内容，分隔线，底栏
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Palette.accent.opacity(0.15))
+                    Image(systemName: "ticket").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.accent)
                 }
-                Spacer()
-                Text("共 \(store.directory.people.flatMap(\.availableResets).count) 张").font(.headline).foregroundStyle(Palette.teal)
+                .frame(width: 42, height: 42)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("额度重置券").font(.system(size: 14.5, weight: .semibold))
+                    Text("用一张立即清空该账号的 5 小时和本周用量；同一邮箱下的槽位共用券")
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Text("共 \(total) 张").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary).monospacedDigit()
             }
-            // 表头和每行用同一套固定列宽，竖向对齐
-            HStack(spacing: 0) {
-                Text("账号").frame(maxWidth: .infinity, alignment: .leading)
-                Text("5 小时").frame(width: Col.quota, alignment: .leading)
-                Text("本周").frame(width: Col.quota, alignment: .leading)
-                Text("券").frame(width: Col.count, alignment: .trailing)
-                Text("最早过期").frame(width: Col.expiry, alignment: .trailing)
-                Color.clear.frame(width: Col.button, height: 1)   // 不给高度的话 Color 会把表头撑高
-            }
-            .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            .padding(.horizontal, 14)
-            ScrollView {
-                VStack(spacing: 6) {
-                    ForEach(rows) { r in
-                        HStack(spacing: 0) {
-                            HStack(spacing: 10) {
-                                Avatar(letter: r.s.slot, size: 28)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(r.s.email).font(.callout.weight(.medium)).lineLimit(1)
-                                    Text(store.workspace(of: r.s)?.displayName ?? r.s.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            QuotaCell(window: r.s.usage.primary, now: store.now).frame(width: Col.quota, alignment: .leading)
-                            QuotaCell(window: r.s.usage.secondary, now: store.now).frame(width: Col.quota, alignment: .leading)
-                            Text("\(r.count) 张").monospacedDigit().frame(width: Col.count, alignment: .trailing)
-                            Text(TimeText.short(r.credit.expiresAt)).monospacedDigit()
-                                .foregroundStyle(TimeText.daysLeft(r.credit.expiresAt, now: store.now) <= 3 ? Palette.orange : Palette.text)
-                                .frame(width: Col.expiry, alignment: .trailing)
-                            HStack {
-                                Spacer()
-                                Button("重置") { store.showResets = false; store.confirmReset = ResetAsk(slot: r.s, credit: r.credit) }
-                                    .glassButton().disabled(store.busy != nil)
-                            }
-                            .frame(width: Col.button)
+            .padding(.horizontal, 20).padding(.top, 20).padding(.bottom, 16)
+
+            Divider()
+
+            VStack(spacing: 8) {
+                // 表头和每行用同一套固定列宽，竖向对齐
+                HStack(spacing: 0) {
+                    Text("账号").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("5 小时").frame(width: Col.quota, alignment: .leading)
+                    Text("本周").frame(width: Col.quota, alignment: .leading)
+                    Text("券").frame(width: Col.count, alignment: .trailing)
+                    Text("最早过期").frame(width: Col.expiry, alignment: .trailing)
+                    Color.clear.frame(width: Col.button, height: 1)   // 不给高度的话 Color 会把表头撑高
+                }
+                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
+                            if i > 0 { Divider().padding(.leading, 50) }
+                            line(r)
                         }
-                        .font(.callout)
-                        .padding(.horizontal, 14).padding(.vertical, 9)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.fill.opacity(0.55)))
+                        if rows.isEmpty { EmptyHint(icon: "ticket", text: "没有可用的重置券").padding(.vertical, 30) }
                     }
-                    if rows.isEmpty { EmptyHint(icon: "ticket", text: "没有可用的重置券") }
+                    // 不另铺底色：和账号页的表格一样直接透出弹窗的页面底色
+                }
+                .scrollIndicators(.never)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 16)
+
+            Divider()
+
+            HStack {
+                Text("点「重置」后还会再确认一次；时间按这台 Mac 的时区显示").font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                Spacer()
+                Button("关闭") { store.showResets = false }.keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+        }
+        .frame(width: 780, height: 560)
+    }
+
+    private func line(_ r: Line) -> some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Avatar(letter: r.s.slot, size: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(r.s.email).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+                    Text(store.workspace(of: r.s)?.shortName ?? r.s.title).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
-            .scrollIndicators(.never)
-            HStack { Spacer(); Button("关闭") { store.showResets = false }.keyboardShortcut(.cancelAction).controlSize(.large) }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Group {
+                if r.s.noFiveHour { Text("不限").foregroundStyle(.secondary) }
+                else { QuotaCell(window: r.s.usage.primary, now: store.now) }
+            }
+            .frame(width: Col.quota, alignment: .leading)
+            QuotaCell(window: r.s.usage.secondary, now: store.now).frame(width: Col.quota, alignment: .leading)
+            Text("\(r.count) 张").monospacedDigit().frame(width: Col.count, alignment: .trailing)
+            Text(TimeText.short(r.credit.expiresAt)).monospacedDigit()
+                .foregroundStyle(TimeText.daysLeft(r.credit.expiresAt, now: store.now) <= 3 ? Palette.orange : Palette.text)
+                .help(TimeText.full(r.credit.expiresAt))
+                .frame(width: Col.expiry, alignment: .trailing)
+            HStack {
+                Spacer()
+                Button("重置") { store.showResets = false; store.confirmReset = ResetAsk(slot: r.s, credit: r.credit) }
+                    .glassButton().controlSize(.small).disabled(store.busy != nil)
+            }
+            .frame(width: Col.button)
         }
-        .padding(24).frame(width: 860, height: 620)
+        .font(.system(size: 12.5))
+        .padding(.horizontal, 12).padding(.vertical, 9)
     }
 
     private enum Col {

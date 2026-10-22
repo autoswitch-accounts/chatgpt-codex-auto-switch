@@ -43,7 +43,7 @@ it switches to the next available one and sends "continue" in every conversation
 
 | | |
 |---|---|
-| 🔄 **Auto-switch & resume** | Switches to the next usable account when the limit is hit, then sends "continue" in the interrupted conversations — quietly in the background, without pulling ChatGPT to the front |
+| 🔄 **Auto-switch & resume** | When the limit is hit, waits for the account's other running conversations to finish their turn, switches to the next usable account and resumes the interrupted ones in the background — without pulling ChatGPT to the front |
 | 🧭 **Switching rules** | Pick the next account alphabetically, soonest reset first, or most remaining; keep an account out of the rotation with "skip rotation" |
 | 📊 **Quota at a glance** | 5-hour and weekly remaining quota, reset times and when each exhausted account comes back |
 | ▶️ **Keep going** | When the model stops on its own (not a limit), send "continue" automatically — capped per conversation |
@@ -51,15 +51,19 @@ it switches to the next available one and sends "continue" in every conversation
 | 🎟 **Reset credits** | Lists free limit-reset credits and their expiry; use one with a confirmation |
 | 🏢 **Teams & subscriptions** | Renewal / expiry dates, seat usage, members and pending invites of every team workspace |
 | 💰 **Member payments** | Monthly due dates per member, overdue in red, "mark as paid" moves to next month |
-| 💬 **Sessions** | Which Codex conversations are running, which stopped at the limit, and on which account |
+| 💬 **Sessions** | Which conversations are running, which stopped at the limit, and on which account; **continue / pause** one or a checked batch without switching to ChatGPT |
+| 🧠 **Model & speed** | Change the model, reasoning effort and speed (Standard / Fast) per conversation or in bulk, with the same options ChatGPT's own menu shows |
 | 🔔 **Notifications** | Renewals, expiries, failed payments, dues, new members, expiring credits — 3 days ahead |
+| 🛡 **Cloudflare-proof** | When Cloudflare blocks the team / subscription / member endpoints, they're fetched through the app's built-in WebKit instead |
 | 🔒 **Local only** | No server, no telemetry. Talks to chatgpt.com and nothing else |
 
 Plus the small things: hover a bar on the overview chart for that account's details; the auto-switch card shows the current
 and the next account; right-click an account to switch, refresh, use a reset credit, start the clock, copy, rename or delete;
 an inspector with subscription, seats, role, 2FA and credits; the account table splits into "in rotation" and "skipped" groups;
 CSV export of members; undo for "paid"; light / dark / system appearance and keep-on-top; and after the service restarts
-it catches up on conversations that hit a limit in the last 30 minutes.
+it catches up on conversations that hit a limit in the last 30 minutes. Conversations paused from the Sessions page are marked
+"paused here" and skipped by auto-resume; deactivated workspaces can be removed from the team list; the sidebar card shows the
+current account with 5-hour and weekly bars.
 
 <table>
   <tr>

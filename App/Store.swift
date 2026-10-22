@@ -25,7 +25,10 @@ final class Store: ObservableObject {
     @Published var auto: AutoStatus = .empty
     @Published var config: AutoConfig = .empty
     @Published var appRunning = false
-    @Published var sessions: [Session] = []
+    @Published var sessions: [Session] = [] { didSet { prunePending() } }
+    /// 刚提交、对话记录里还没体现的模型设置：先按提交的值显示（守护进程 10 分钟改不成会放弃，这里也 10 分钟过期）
+    @Published private var pendingSettings: [String: (at: Double, s: [String: String])] = [:]
+    @Published var models: [ModelInfo] = []
     @Published var directory: Directory = .empty
     @Published var notices: [Notice] = []
     @Published var unread = 0
@@ -139,7 +142,9 @@ final class Store: ObservableObject {
     var current: Slot? { slots.first { $0.current } }
     func workspace(of s: Slot) -> Workspace? { directory.workspace(s.acct) }
     func person(of s: Slot) -> Person? { directory.person(s.email) }
-    var teams: [Workspace] { directory.workspaces.filter(\.isTeam) }
+    var teams: [Workspace] { directory.workspaces.filter { $0.isTeam && !(directory.hidden ?? []).contains($0.id) } }
+    /// 团队页里移除了的空间
+    var hiddenTeams: [Workspace] { directory.workspaces.filter { (directory.hidden ?? []).contains($0.id) } }
     /// 正在回复中的对话：手动切号会把它们打断
     var activeSessions: [Session] { sessions.filter { $0.status == "running" || $0.status == "stalled" } }
 
@@ -205,6 +210,15 @@ final class Store: ObservableObject {
     }
 
     /// 空间 / 订阅 / 成员；refresh 为真时联网同步（约 15 秒）
+    /// 团队页「从列表移除」/ 恢复：只改本机显示
+    func hideTeam(_ w: Workspace, _ hide: Bool) {
+        Task {
+            _ = await engine([hide ? "--hide-team" : "--unhide-team", w.id])
+            say(hide ? "已从列表移除「\(w.displayName)」" : "已恢复「\(w.displayName)」")
+            loadDirectory(refresh: false)
+        }
+    }
+
     func loadDirectory(refresh: Bool) {
         if refresh {
             guard !syncing else { return }
@@ -299,6 +313,84 @@ final class Store: ObservableObject {
         Task {
             if let r = Store.decode(await engine(["--delete", s.slot]), Simple.self), !r.ok { say(r.err ?? "删除失败") }
             reload()
+        }
+    }
+
+    /// 可选模型列表（起一次 app-server，后台缓存一天）
+    func loadModels() {
+        guard models.isEmpty else { return }
+        Task {
+            let out = await Task.detached { Store.exec("autoswitch.py", ["--models-json"]) }.value
+            if let r = Store.decode(out, ModelsPayload.self) { models = r.models }
+        }
+    }
+
+    /// 会话页显示用：叠上刚提交还没生效的设置
+    func shown(_ s: Session) -> Session {
+        guard let p = pendingSettings[s.thread] else { return s }
+        var c = s
+        if let m = p.s["model"] { c.model = m }
+        if let e = p.s["effort"] { c.effort = e }
+        if let t = p.s["tier"] { c.tier = t }
+        return c
+    }
+
+    private func prunePending() {
+        let t = Date().timeIntervalSince1970
+        for (id, p) in pendingSettings {
+            let s = sessions.first { $0.thread == id }
+            let same = s.map { s in p.s.allSatisfy { k, v in
+                k == "model" ? s.model == v : k == "effort" ? s.effort == v : s.fast == (v == "priority") } } ?? false
+            if same || t - p.at > 600 { pendingSettings[id] = nil }
+        }
+    }
+
+    func modelName(_ id: String?) -> String {
+        guard let id, !id.isEmpty else { return "—" }
+        return models.first { $0.id == id }?.name ?? id
+    }
+
+    /// 改对话的模型 / 推理强度 / 速度（tier：priority 快速、default 标准）。经守护进程走总线，下一轮起生效
+    func setThreads(_ list: [Session], model: String? = nil, effort: String? = nil, tier: String? = nil) {
+        guard !list.isEmpty else { return }
+        var s: [String: String] = [:]
+        if let model { s["model"] = model }
+        if let effort { s["effort"] = effort }
+        if let tier { s["tier"] = tier }
+        guard !s.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: ["threads": list.map(\.thread), "settings": s]),
+              let arg = String(data: data, encoding: .utf8) else { return }
+        Task {
+            let r = Store.decode(await engine(["--set-thread", arg]), Simple.self)
+            if r?.ok == false { say(r?.err ?? "没改成"); return }
+            let t = Date().timeIntervalSince1970
+            for x in list { pendingSettings[x.thread] = (t, (pendingSettings[x.thread]?.s ?? [:]).merging(s) { $1 }) }
+            say((list.count == 1 ? "「\(list[0].displayTitle)」" : "\(list.count) 个对话") + "的设置已提交，下一轮起生效")
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            reloadSessions()
+        }
+    }
+
+    /// 会话页的「继续」/「全部继续」：后台排进 ChatGPT 的待发队列再唤醒，不切到 ChatGPT
+    func continueNow(_ list: [Session]) {
+        guard !list.isEmpty else { return }
+        Task {
+            _ = await engine(["--continue"] + list.map(\.thread))
+            say(list.count == 1 ? "已在后台让「\(list[0].displayTitle)」继续" : "已在后台让 \(list.count) 个对话继续")
+            try? await Task.sleep(nanoseconds: 4_000_000_000)    // 守护进程 3 秒一轮，等它接手再刷新
+            reloadSessions()
+        }
+    }
+
+    /// 会话页的「暂停」：停下正在跑的这一轮（同 ChatGPT 里的停止按钮），排在续答队列里的移出队列
+    func pauseNow(_ list: [Session]) {
+        guard !list.isEmpty else { return }
+        Task {
+            let r = Store.decode(await engine(["--pause"] + list.map(\.thread)), Simple.self)
+            if r?.ok == false { say(r?.err ?? "没能暂停"); return }
+            say(list.count == 1 ? "正在暂停「\(list[0].displayTitle)」" : "正在暂停 \(list.count) 个对话")
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            reloadSessions()
         }
     }
 
@@ -431,7 +523,7 @@ final class Store: ObservableObject {
 
     func beginAdd() {
         addPhase = .intro
-        baseline = Store.decode(Store.exec("engine.py", ["--current-json"]), Current.self)?.acct ?? ""
+        baseline = Store.decode(Store.exec("engine.py", ["--current-json"]), Current.self)?.who ?? ""
     }
 
     /// 存回当前凭证 → 退出 ChatGPT → codex logout → 用新槽位的 profile 开窗 → 等登录 → 自动收凭证
@@ -465,7 +557,7 @@ final class Store: ObservableObject {
                 guard let self else { return }
                 let out = await self.engine(["--current-json"])
                 guard let c = Store.decode(out, Current.self),
-                      !c.acct.isEmpty, c.acct != self.baseline else { continue }
+                      !c.acct.isEmpty, c.who != self.baseline else { continue }
                 self.addPhase = .working("已登录 \(c.email)，正在收取凭证…")
                 AppWindow.comeBack()
                 let r = Store.decode(await self.engine(["--capture"]), Simple.self)

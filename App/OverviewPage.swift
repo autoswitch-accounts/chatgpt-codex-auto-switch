@@ -76,7 +76,7 @@ struct OverviewPage: View {
             tile(MetricTile(title: "可用账号", value: "\(usable)", unit: "/ \(store.slots.count)",
                             detail: cur.map { "当前 \($0.slot) · \($0.email.components(separatedBy: "@")[0])" } ?? "当前账号不在列表里",
                             icon: "person.2.fill", tint: usable > 0 ? Palette.green : Palette.red)) { go(.accounts) },
-            tile(MetricTile(title: "当前 5 小时剩余", value: cur.map { "\(Int(max(0, $0.remaining5h(now)).rounded()))" } ?? "—", unit: "%",
+            tile(MetricTile(title: cur?.noFiveHour == true ? "当前本周剩余" : "当前 5 小时剩余", value: cur.map { "\(Int(max(0, $0.remaining5h(now)).rounded()))" } ?? "—", unit: "%",
                             detail: cur.map { "本周 \(Int(max(0, $0.remainingWeek(now)).rounded()))% · \(resetText($0.usage.primary, now: now)) 重置" } ?? "",
                             icon: "gauge.with.dots.needle.67percent", tint: Palette.quota(cur?.remaining5h(now) ?? 0))) {
                 store.focus = cur?.slot; go(.accounts)
@@ -230,7 +230,7 @@ struct OverviewPage: View {
         } rows: {
             ForEach(list) { r in
                 HStack(spacing: 10) {
-                    PayText(epoch: r.nextPay, now: store.now, manual: r.m.payManual == true).frame(width: 64, alignment: .leading)
+                    PayText(epoch: r.nextPay, now: store.now, dateOnly: true).fixedSize().frame(minWidth: 44, alignment: .leading)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(r.wechat.isEmpty ? r.email : "\(r.wechat) · \(r.email)").font(.callout.weight(.medium)).lineLimit(1)
                         Text("\(r.team) · 所有者 \(r.owner)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -298,14 +298,13 @@ private struct QuotaTip: View {
                 }
             }
             Divider()
-            row("5 小时", s.usage.primary, color: Palette.accent)
+            if !s.noFiveHour { row("5 小时", s.usage.primary, color: Palette.accent) }   // 只有每周额度的套餐不显示 5 小时
             row("本周", s.usage.secondary, color: Palette.teal)
             Text(status).font(.caption.weight(.medium)).foregroundStyle(statusColor)
         }
         .padding(12)
-        .background(Palette.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Palette.line))
-        .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
+        .glassPanel(cornerRadius: 14)          // 和页面上的卡片、侧栏卡片同一种玻璃底
+        .shadow(color: .black.opacity(0.10), radius: 10, y: 4)
     }
 
     private func row(_ title: String, _ w: UsageWindow?, color: Color) -> some View {
@@ -432,7 +431,7 @@ struct AutoCard: View {
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
             }
-            quotaLine("5 小时", c.usage.primary)
+            if !c.noFiveHour { quotaLine("5 小时", c.usage.primary) }
             quotaLine("本周", c.usage.secondary)
         }
         .contentShape(Rectangle())

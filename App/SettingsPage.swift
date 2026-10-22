@@ -46,7 +46,7 @@ struct SettingsPage: View {
                     .toggleStyle(SwitchStyle()).labelsHidden()
             }
             SettingRow("后台切号，不打扰", "自动切号和续答都在后台进行：ChatGPT 重启后不抢到最前面，也不跳到被续答的对话，"
-                       + "你手上的窗口保持不动。你在这里手动切号时照常把 ChatGPT 叫到前台") {
+                       + "你手上的窗口保持不动。关掉后，ChatGPT 会到前台并打开被续答的对话；你在这里手动切号时照常把 ChatGPT 叫到前台") {
                 Toggle("", isOn: Binding(get: { store.config.quiet_switch },
                                          set: { store.config.quiet_switch = $0; store.setConfig("quiet_switch", $0 ? "true" : "false") }))
                     .toggleStyle(SwitchStyle()).labelsHidden()

@@ -85,6 +85,9 @@ struct Slot: Identifiable, Decodable, Equatable {
         return plan == "team" ? String(acct.prefix(8)) : "个人空间"
     }
     var planLabel: String { Slot.planLabel(plan) }
+    /// 这个人在空间里的席位档位：同一个团队空间里，有人是普通席位（plan_type team），
+    /// 有人是 Pro Lite 席位（self_serve_business_prolite）。plan 取自这个槽位自己的凭证，所以按人区分
+    var seatTier: String? { plan.hasSuffix("_prolite") ? "Pro Lite" : nil }
     static func planLabel(_ p: String) -> String {
         switch p {
         case "team": return "Business"
@@ -95,7 +98,10 @@ struct Slot: Identifiable, Decodable, Equatable {
         default:     return p.capitalized
         }
     }
-    func remaining5h(_ now: Double) -> Double { usage.primary?.remaining(now: now) ?? -1 }
+    /// 5 小时剩余；没有 5 小时限额、只有每周额度的套餐按每周剩余算（排序、图表用）
+    func remaining5h(_ now: Double) -> Double { usage.primary?.remaining(now: now) ?? usage.secondary?.remaining(now: now) ?? -1 }
+    /// 这个套餐没有 5 小时限额（服务端只给了每周窗口）
+    var noFiveHour: Bool { usage.primary == nil && usage.secondary != nil }
     func remainingWeek(_ now: Double) -> Double { usage.secondary?.remaining(now: now) ?? -1 }
     /// 5 小时窗口下次重置的时刻；已重置、还没开始计时、没数据的排最后（和 autoswitch.next_reset 一致）
     func nextReset5h(_ now: Double) -> Double {
@@ -148,7 +154,7 @@ struct Session: Identifiable, Decodable {
     let title: String
     let project: String
     let cwd: String
-    let status: String          // running / stalled / limited / interrupted / aborted / error / done / idle
+    let status: String          // running / stalled / limited / interrupted / paused（会话页暂停的）/ aborted / error / done / idle
     let error: String
     let turnStartedAt: Double
     let lastActivity: Double
@@ -156,12 +162,51 @@ struct Session: Identifiable, Decodable {
     let queued: Bool
     let slot: String?           // 跑在哪个账号（槽位字母）；按切号历史推算，可能为空
     let email: String?
+    var model: String?          // 当前模型 / 推理强度 / 速度（priority = 快速），读自对话记录，可能为空
+    var effort: String?
+    var tier: String?
     var id: String { thread }
+    var fast: Bool { tier == "priority" }
     var displayTitle: String { title.isEmpty ? "未命名对话 · \(thread.prefix(8))" : title }
     var isActive: Bool { status == "running" || status == "stalled" }
+    /// 可以点「继续」：没在跑（运行中 / 疑似卡住的不打断）
+    var canContinue: Bool { !isActive }
+    /// 报错只取第一句（后面常跟「升级到 Pro（链接）」之类的推销）
+    var shortError: String {
+        guard let r = error.range(of: #"[.。!！](\s|$)"#, options: .regularExpression) else { return error }
+        return String(error[..<r.upperBound]).trimmingCharacters(in: .whitespaces)
+    }
+    /// 可以点「暂停」：正在跑，或排在续答队列里
+    var canPause: Bool { isActive || queued }
 }
 
 struct SessionsPayload: Decodable { let sessions: [Session] }
+
+/// 可选模型（Codex 的 model/list）
+struct ModelInfo: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let efforts: [String]
+    let `default`: String
+    let fast: Bool          // 有没有「快速」档（service tier = priority）
+    let speed: Double?      // 快速档几倍速（model/list 的说明里写的 2x / 1.5x）
+
+    // 以下叫法照 ChatGPT 自己的中文界面（推理强度、速度菜单）
+    static func effortName(_ e: String) -> String {
+        ["none": "无", "minimal": "极低", "low": "轻度", "medium": "中", "high": "高", "xhigh": "极高", "max": "Max", "ultra": "Ultra"][e] ?? e
+    }
+
+    static let speedTitle = "速度"
+    static func tierName(_ t: String) -> String { t == "priority" ? "快速" : "标准" }
+    /// 菜单里的一项：名称 · 说明（快速档写几倍速）
+    static func tierLine(_ t: String, speed: Double?) -> String {
+        guard t == "priority" else { return "标准 · 默认速度" }
+        guard let x = speed, x > 0 else { return "快速 · 速度更快，用量更高" }
+        return "快速 · \(x.formatted(.number.precision(.fractionLength(0...1)))) 倍速度，用量更多"
+    }
+}
+
+struct ModelsPayload: Decodable { let models: [ModelInfo] }
 
 // MARK: - 账号目录（空间 / 订阅 / 成员，全部来自接口）
 
@@ -215,6 +260,8 @@ struct Member: Identifiable, Decodable, Hashable {
     let payManual: Bool?        // 交费日是不是手动改过
     let paidThrough: Double?    // 已交到哪一期（那期的应交日）
     let paidMarked: Bool?       // 在台账里标记过已交（没标记过的按加入日推算默认值）
+    let local: Bool?            // 成员列表没拿到时，按本机登录过这个空间的账号补上的（没有加入时间）
+    let viaSlot: String?
     var active: Bool { deactivatedAt == 0 }
     var isOwner: Bool { role == "account-owner" }
 }
@@ -247,6 +294,10 @@ struct Workspace: Identifiable, Decodable, Hashable {
         if !name.isEmpty { return name }
         return "个人空间 · \(access.first?.email ?? "")"
     }
+    /// 账号表、详情里用：每行已经有邮箱了，个人空间就不再带邮箱
+    var shortName: String { isTeam || !name.isEmpty ? displayName : "个人空间" }
+    /// 空间的套餐名（官方名，没有就按 plan 推）。注意这是空间级的；同一空间里每个人的席位档位可能不同，见 Slot.seatTier
+    var planTitle: String { planName.isEmpty ? Slot.planLabel(plan) : planName }
     var myRole: String { access.first.map { Workspace.roleText($0.role) } ?? "" }
     /// 所有者邮箱：成员里的 account-owner，查不到成员时用能进这个空间的我的账号
     var ownerEmail: String { members?.first { $0.isOwner && $0.active }?.email ?? access.first?.email ?? "" }
@@ -292,6 +343,7 @@ struct Directory: Decodable {
     let people: [Person]
     let workspaces: [Workspace]
     let errors: [String]
+    var hidden: [String]? = nil          // 团队页里手动移除的空间 id（只是不显示）
     static let empty = Directory(at: 0, people: [], workspaces: [], errors: [])
 
     func workspace(_ id: String) -> Workspace? { workspaces.first { $0.id == id } }
@@ -316,7 +368,11 @@ struct Notice: Identifiable, Decodable, Hashable {
 struct NoticesPayload: Decodable { let items: [Notice]; let unread: Int }
 
 struct Simple: Decodable { let ok: Bool; let err: String?; let slot: String?; let email: String?; let plan: String? }
-struct Current: Decodable { let acct: String; let email: String; let plan: String; let known: Bool }
+struct Current: Decodable {
+    let acct: String; let user: String?; let email: String; let plan: String; let known: Bool
+    /// 同一个团队空间里的不同成员 acct 相同，要连人一起比
+    var who: String { acct.isEmpty ? "" : acct + "|" + (user ?? email.lowercased()) }
+}
 
 /// 一行日志
 struct LogLine: Identifiable {
@@ -344,6 +400,16 @@ enum TimeText {
     }
 
     static func date(_ epoch: Double) -> String { epoch > 0 ? ymd.string(from: Date(timeIntervalSince1970: epoch)) : "—" }
+    /// 月-日 时:分（不换成「今天 / 明天」）
+    static func dayTime(_ epoch: Double) -> String { epoch > 0 ? mdhm.string(from: Date(timeIntervalSince1970: epoch)) : "—" }
+    /// 悬停说明用：完整日期时间 + 本机时区。接口给的是 UTC 时刻，这里按这台 Mac 的时区显示
+    static func full(_ epoch: Double) -> String {
+        guard epoch > 0 else { return "—" }
+        let d = Date(timeIntervalSince1970: epoch), tz = TimeZone.current
+        let h = Double(tz.secondsFromGMT(for: d)) / 3600
+        let off = h == h.rounded() ? String(format: "%+d", Int(h)) : String(format: "%+.1f", h)
+        return ymd.string(from: d) + " " + hm.string(from: d) + "（本机时区 \(tz.identifier)，UTC\(off)）"
+    }
 
     /// 「3 分钟前」「2 小时前」
     static func ago(_ epoch: Double, now: Double = Date().timeIntervalSince1970) -> String {

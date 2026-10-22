@@ -23,6 +23,7 @@ struct TeamsPage: View {
     @State private var order = [KeyPathComparator(\SpaceRow.renew)]
     @State private var query = ""
     @State private var scope = "all"
+    @State private var hideAsk: Workspace? = nil
 
     private var rows: [SpaceRow] {
         let due = Dictionary(grouping: store.duePayments(days: 3), by: { $0.w.id }).mapValues(\.count)
@@ -49,6 +50,14 @@ struct TeamsPage: View {
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
                 Spacer()
+                let hidden = store.hiddenTeams
+                if !hidden.isEmpty {
+                    Menu {
+                        ForEach(hidden) { w in Button("恢复「\(w.displayName)」") { store.hideTeam(w, false) } }
+                    } label: { Text("已移除 \(hidden.count) 个") }
+                    .menuStyle(.borderlessButton).fixedSize().foregroundStyle(.secondary)
+                    .help("从列表移除的团队，点这里可以恢复显示")
+                }
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
             Table(rows, selection: $selection, sortOrder: $order) {
@@ -88,15 +97,32 @@ struct TeamsPage: View {
                 TableColumn("续费 / 到期", value: \.renew) { r in RenewCell(ws: r.w, now: store.now) }
                     .width(min: 96, ideal: 116)
                 TableColumn("状态", value: \.statusRank) { r in
-                    if r.w.deactivated { StatusChip(text: "已停用", color: Palette.red) }
+                    if r.w.deactivated {
+                        HStack(spacing: 8) {
+                            StatusChip(text: "已停用", color: Palette.red)
+                            Button("移除") { hideAsk = r.w }.glassButton().controlSize(.small)
+                                .help("从团队列表里拿掉（只改本机显示，不动 ChatGPT 那边）")
+                        }
+                    }
                     else if r.w.sub.delinquent { StatusChip(text: "欠费", color: Palette.red) }
                     else if r.w.sub.active { StatusChip(text: "正常", color: Palette.green) }
                     else { StatusChip(text: "未订阅", color: Palette.gray) }
                 }
-                .width(min: 60, ideal: 70)
+                .width(min: 120, ideal: 130)
             }
             .alternatingRowBackgrounds(.disabled)   // 不要斑马纹：和概览、设置一样透出页面底色
             .scrollContentBackground(.hidden)
+            .contextMenu(forSelectionType: String.self) { ids in
+                if let id = ids.first, let w = store.directory.workspace(id), w.deactivated {
+                    Button("从列表移除…") { hideAsk = w }
+                }
+            }
+            .alert("从团队列表移除「\(hideAsk?.displayName ?? "")」？", isPresented: Binding(get: { hideAsk != nil }, set: { if !$0 { hideAsk = nil } })) {
+                Button("移除") { if let w = hideAsk { store.hideTeam(w, true); if selection == w.id { selection = nil } } }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("这个空间已停用。只是在这里不再显示，不会动 ChatGPT 那边的空间；之后可以在右上角「已移除」里恢复。")
+            }
         }
         .overlay(alignment: .trailing) {
             if let id = selection, let w = store.directory.workspace(id) {
@@ -225,7 +251,7 @@ struct MemberLine: View {
     let wechat: String
     let now: Double
     var body: some View {
-        let isNew = m.active && now - m.joined <= 3 * 86400 && !m.isOwner
+        let isNew = m.active && m.joined > 0 && now - m.joined <= 3 * 86400 && !m.isOwner
         HStack(spacing: 9) {
             ZStack {
                 Circle().fill(m.isOwner ? Palette.accent.opacity(0.18) : Palette.fill)
@@ -239,7 +265,9 @@ struct MemberLine: View {
                     if isNew { Pill(text: "新", color: Palette.green) }
                     if m.isOwner { Pill(text: "所有者", color: Palette.accent) }
                 }
-                Text([wechat.isEmpty ? "" : "微信 \(wechat)", "\(TimeText.date(m.joined).dropFirst(2)) 加入"]
+                Text([wechat.isEmpty ? "" : "微信 \(wechat)",
+                      m.local == true ? "本机已登录" + (m.viaSlot.map { $0.isEmpty ? "" : "（槽 \($0)）" } ?? "") + " · 加入时间待同步"
+                                      : "\(TimeText.date(m.joined).dropFirst(2)) 加入"]
                         .filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -258,6 +286,7 @@ struct PayText: View {
     let now: Double
     var manual = false
     var compact = false
+    var dateOnly = false        // 只写日期（概览的待交费卡片：窄，颜色已经说明远近）
     @Environment(\.backgroundProminence) private var prominence
 
     static func daysAway(_ epoch: Double, now: Double) -> Int {
@@ -270,12 +299,25 @@ struct PayText: View {
         let d = PayText.daysAway(epoch, now: now)
         let color: Color = prominence == .increased ? .white : (d <= 0 ? Palette.red : d <= 3 ? Palette.orange : Palette.text)
         let when = d < 0 ? "逾期 \(-d) 天" : d == 0 ? "今天" : d == 1 ? "明天" : "\(d) 天后"
-        VStack(alignment: compact ? .trailing : .leading, spacing: 1) {
-            HStack(spacing: 4) {
-                Text(TimeText.date(epoch).dropFirst(5)).monospacedDigit().fontWeight(d <= 3 ? .semibold : .regular)
-                if manual { Text("手动").font(.system(size: 9.5, weight: .medium)).foregroundStyle(.secondary) }
+        let sub: Color = prominence == .increased ? .white.opacity(0.8) : (d <= 3 ? color : .secondary)
+        Group {
+            if dateOnly {
+                Text(TimeText.date(epoch).dropFirst(5)).monospacedDigit().lineLimit(1)
+            } else if compact {
+                // 团队面板里靠右的两行
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(TimeText.date(epoch).dropFirst(5)).monospacedDigit()
+                    Text(when).font(.caption).foregroundStyle(sub)
+                }
+            } else {
+                // 表格里一行写完：两行的格子会比同一行别的列偏上，看着没对齐；字重也不变，免得宽窄不一
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(TimeText.date(epoch).dropFirst(5)).monospacedDigit()
+                    Text(when).font(.caption).foregroundStyle(sub)
+                    if manual { Text("手动").font(.caption2).foregroundStyle(.secondary) }
+                }
+                .lineLimit(1)
             }
-            Text(when).font(.caption).foregroundStyle(prominence == .increased ? .white.opacity(0.8) : (d <= 3 ? color : .secondary))
         }
         .foregroundStyle(color)
         .help((d < 0 ? "过了应交日还没标记已交；标记后顺延到下个月。" : "")
@@ -346,7 +388,7 @@ struct MembersPage: View {
                         if r.m.active && store.now - r.joined <= 3 * 86400 && !r.m.isOwner { Pill(text: "新", color: Palette.green) }
                         if r.m.isOwner { Pill(text: "所有者", color: Palette.accent) }
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 10)        // 行高和账号页差不多，不挤
                 }
                 .width(min: 170, ideal: 220)
                 TableColumn("微信名", value: \.wechat) { r in
@@ -363,7 +405,7 @@ struct MembersPage: View {
                     if r.m.active, let p = r.m.nextPay { PayText(epoch: p, now: store.now, manual: r.m.payManual == true) }
                     else { Text("—").foregroundStyle(.tertiary) }
                 }
-                .width(min: 86, ideal: 100)
+                .width(min: 120, ideal: 140)
                 TableColumn("交费") { r in PaidCell(store: store, r: r) }
                     .width(min: 96, ideal: 110)
                 TableColumn("状态", value: \.state) { r in

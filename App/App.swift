@@ -110,17 +110,26 @@ struct Sidebar: View {
     }
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
             if let c = store.current {
-                HStack(spacing: 8) {
-                    Avatar(letter: c.slot, size: 26)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(c.email.components(separatedBy: "@").first ?? c.email)
-                            .font(.callout.weight(.semibold)).lineLimit(1)
-                        Text("5h \(Int(max(0, c.remaining5h(store.now)).rounded()))% · 本周 \(Int(max(0, c.remainingWeek(store.now)).rounded()))%")
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    Avatar(letter: c.slot, size: 32)
+                    VStack(alignment: .leading, spacing: 3) {
+                        // 侧栏窄：放不下就换行，不省略（悬停提示在侧栏里不一定出得来）
+                        // @ 后面插一个零宽空格：要换行就在 @ 处断，不把域名拆开
+                        Text(c.email.replacingOccurrences(of: "@", with: "@\u{200B}")).font(.system(size: 13, weight: .semibold))
+                            .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                        Text(store.workspace(of: c)?.shortName ?? c.title)
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
+                    .help(c.email + (store.workspace(of: c).map { "\n" + $0.shortName } ?? ""))
                 }
+                // 有 5 小时额度的账号两条都有；只有周额度的套餐只显示本周
+                VStack(spacing: 10) {
+                    if !c.noFiveHour { quotaBar("5 小时", c.usage.primary?.remaining(now: store.now)) }
+                    quotaBar("本周", c.usage.secondary?.remaining(now: store.now))
+                }
+                Divider()
             }
             HStack(spacing: 6) {
                 Circle().fill(AutoCard.color(store.auto)).frame(width: 7, height: 7)
@@ -131,9 +140,26 @@ struct Sidebar: View {
                     .help("自动切号并续答")
             }
         }
-        .padding(12)
-        .glassPanel(cornerRadius: 14)
+        .padding(.horizontal, 14).padding(.vertical, 16)
+        .glassPanel(cornerRadius: 16)
         .padding(10)
+    }
+
+    /// 侧栏卡片里的一条额度：名称 · 进度条（剩余）· 百分比
+    private func quotaBar(_ title: String, _ left: Double?) -> some View {
+        let l = max(0, min(100, left ?? 0))
+        return HStack(spacing: 8) {
+            Text(title).font(.caption).foregroundStyle(.secondary).frame(width: 38, alignment: .leading)
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Palette.track)
+                    Capsule().fill(Palette.quota(l)).frame(width: l > 0 ? max(6, g.size.width * l / 100) : 0)
+                }
+            }
+            .frame(height: 6)
+            Text(left == nil ? "—" : "\(Int(l.rounded()))%").font(.caption.monospacedDigit().weight(.medium))
+                .foregroundStyle(l < 1 && left != nil ? Palette.red : Palette.text).frame(width: 34, alignment: .trailing)
+        }
     }
 
     private var sideStatus: String {
@@ -209,8 +235,9 @@ struct RootView: View {
             Text("\(s.email)（槽 \(s.slot)）\n会用这个账号发一句极短的消息（不切号、不影响当前对话），"
                  + "5 小时窗口从现在开始，\(TimeText.short(store.now + 5 * 3600)) 前后重置。会用掉很少一点额度。")
         }
-        .sheet(item: $store.editingMember) { r in MemberEditSheet(store: store, row: r) }
-        .sheet(isPresented: $store.showResets) { ResetSheet(store: store) }
+        // 弹窗统一铺和正文页一样的渐变底色
+        .sheet(item: $store.editingMember) { r in MemberEditSheet(store: store, row: r).background(PageBackground()) }
+        .sheet(isPresented: $store.showResets) { ResetSheet(store: store).background(PageBackground()) }
         .alert(switchTitle, isPresented: Binding(get: { store.confirmSwitch != nil },
                                                  set: { if !$0 { store.confirmSwitch = nil } }), presenting: store.confirmSwitch) { s in
             let n = store.activeSessions.count
@@ -239,8 +266,8 @@ struct RootView: View {
         } message: { s in
             Text("只删除本机保存的 \(s.email) 凭证，云端账号不受影响，以后可以重新添加。")
         }
-        .sheet(item: $store.renaming) { s in renameSheet(s) }
-        .sheet(isPresented: $store.adding) { AddSheet(store: store) { store.adding = false } }
+        .sheet(item: $store.renaming) { s in renameSheet(s).background(PageBackground()) }
+        .sheet(isPresented: $store.adding) { AddSheet(store: store) { store.adding = false }.background(PageBackground()) }
     }
 
     @ViewBuilder private var detail: some View {
@@ -355,6 +382,7 @@ struct AddSheet: View {
                 }
             }
             .padding(.horizontal, 20).padding(.vertical, 16)
+            .frame(maxHeight: .infinity, alignment: .top)
 
             Divider()
 
@@ -363,24 +391,20 @@ struct AddSheet: View {
                     Text("当前凭证会先存回槽位，不会丢").font(.system(size: 10.5)).foregroundStyle(.tertiary)
                 }
                 Spacer()
-                Button(closeLabel) {
-                    if case .naming(let slot, _, _) = store.addPhase { store.finishAdd(slot) } else { store.endAdd() }
-                    onClose()
+                if case .naming(let slot, _, _) = store.addPhase {
+                    // 登录用的 ChatGPT 窗口就是新账号的，已经开着，不用再打开
+                    Button("完成") { store.finishAdd(slot); onClose() }.keyboardShortcut(.defaultAction)
+                } else {
+                    Button("取消") { store.endAdd(); onClose() }
                 }
                 if case .intro = store.addPhase {
                     Button("开始") { store.runAdd() }.keyboardShortcut(.defaultAction)
                 }
-                if case .naming(let slot, _, _) = store.addPhase {
-                    Button("保存并打开") {
-                        if !draft.isEmpty, let s = store.slots.first(where: { $0.slot == slot }) { store.rename(s, to: draft) }
-                        store.finishAdd(slot); onClose()
-                    }
-                    .keyboardShortcut(.defaultAction)
-                }
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
         }
-        .frame(width: 420)
+        // 高度固定：登录时整个 App 会隐藏，期间内容变高变矮、窗口没跟着变，回来后顶部会露出一块黑边
+        .frame(width: 420, height: 350)
         // 添加期间退回普通层（用户要在 ChatGPT 的登录窗里操作），结束再按设置恢复
         .onAppear { AppWindow.setAddFlow(true) }
         .onDisappear { AppWindow.setAddFlow(false) }
@@ -437,14 +461,8 @@ struct AddSheet: View {
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Palette.raised))
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("显示名（可选）").font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
-                    EndCursorField(text: $draft, placeholder: ws.isEmpty ? (plan == "team" ? "例如 我的团队" : "例如：个人空间")
-                                                                     : "留空则用官方名「\(ws)」")
-                        .frame(height: 22)
-                    Text("workspace 官方名称会自动读取；这里只在你想另起名字时填")
-                        .font(.system(size: 10.5)).foregroundStyle(.tertiary)
-                }
+                Text("空间名和套餐会自动读取（\(Slot.planLabel(plan))）。想另起显示名，之后在账号的右键菜单里「重命名」")
+                    .font(.system(size: 10.5)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -477,15 +495,11 @@ struct AddSheet: View {
     }
     private var headSub: String {
         switch store.addPhase {
-        case .naming:  return "可以另起一个显示名，不填就用官方名"
+        case .naming:  return "已存好，空间名自动读取"
         case .failed:  return "可以关掉重试"
         case .working: return "过程中别关这个窗口"
         default:       return "整个流程只有输账号密码需要你操作"
         }
-    }
-    private var closeLabel: String {
-        if case .naming = store.addPhase { return "跳过" }
-        return "取消"
     }
 }
 
@@ -560,6 +574,13 @@ enum Entry {
             apps.forEach { _ = $0.hide() }       // hide() 对后台 App 常返回 false 但照样隐藏了，只看有没有这个 App
             exit(apps.isEmpty ? 1 : 0)
         }
+        // 后台切号时 ChatGPT 抢了前台：把焦点还给用户原来在用的 App（不发 reopen，不会给它新开窗口）
+        if CommandLine.arguments.count >= 3 && CommandLine.arguments[1] == "--activate-app" {
+            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: CommandLine.arguments[2])
+            exit(apps.map { $0.activate(options: []) }.contains(true) ? 0 : 1)
+        }
+        // 后台服务被 Cloudflare 拦住时，借 WebKit 调 chatgpt.com 的接口（见 WebFetch.swift）
+        if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--web-fetch" { WebFetch.run() }
         AccountsApp.main()
     }
 }
