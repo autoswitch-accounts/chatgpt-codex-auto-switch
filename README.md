@@ -6,7 +6,7 @@
 
 **ChatGPT 账号：多个 ChatGPT / Codex 账号，一个窗口管好。**<br>
 额度用完自动换号，被打断的对话自动接着答；所有 Codex 对话一张表里继续 / 暂停，随手换模型、推理强度和速度；<br>
-团队续费、成员交费、额度重置券一目了然。
+团队续费、成员交费、额度重置券一目了然；中文 / English 界面随时切换。
 
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#系统要求)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M4-555555)](#系统要求)
@@ -47,9 +47,10 @@
 | 📊 **额度一眼看清** | 每个账号的 5 小时 / 本周剩余、重置时间、几点恢复，当前账号几乎实时 |
 | ▶️ **结束后自动继续** | 模型自己停下（不是额度用完）也能自动接着干，每个对话有次数上限，整晚不用守着 |
 | ⏱ **开始计时** | 没用过的账号点一下，5 小时窗口从现在开始计时，用到时已经快重置；也可以交给后台自动挨个起算 |
-| 🎟 **额度重置券** | 列出每个账号的免费重置券和过期时间，一键使用，用前二次确认 |
+| 🎟 **额度重置券** | 列出每个账号（空间）自己的免费重置券和过期时间，一键使用，用前二次确认 |
 | 🏢 **团队与订阅** | 所有团队空间的续费 / 到期日、席位用量、成员、待接受邀请 |
 | 💰 **成员交费台账** | 按加入日每月提醒交费，逾期标红，收到钱点「标记已交」顺延一个月 |
+| 🌐 **中文 / English** | 设置里切换界面语言，App 自动重开；后台新写的日志、通知跟着换，以前写下的消息和日志也按当前语言显示 |
 | 🔔 **消息中心** | 续费、到期、欠费、交费、新成员、券过期，提前 3 天提醒并发系统通知 |
 | 🛡 **不怕 Cloudflare 拦截** | 团队、订阅、成员接口被 Cloudflare 拦下时，自动改用 App 内置的浏览器内核去取 |
 | 🔒 **数据只在本机** | 没有服务器，不收集任何信息 |
@@ -185,7 +186,11 @@
 ### ⚙️ 设置
 
 自动切号总开关、后台切号（不打扰）、切号顺序、续答用语、卡住时干预、回合结束后自动继续（含次数上限）、自动开始计时；
-外观（跟随系统 / 浅色 / 深色）、窗口置顶、立即同步、重启后台服务、打开数据文件夹。
+外观（跟随系统 / 浅色 / 深色）、窗口置顶、语言（跟随系统 / 中文 / English）、立即同步、重启后台服务、打开数据文件夹。
+
+**中英双语。** 换语言后 App 自动退出并重新打开。界面、后台服务新写的日志、通知、状态都用新语言；
+以前按另一种语言写下的消息、日志、团队优惠这类同步来的文字，显示时也会换成当前语言（认不出的原样显示）。
+续答用语如果还是默认的「继续」，会跟着换成「Continue」，反过来也一样；自己改过的不动。
 
 <img src="docs/images/settings.png" alt="设置：自动切号、后台切号、切号顺序、续答用语、结束后自动继续、自动开始计时" width="100%">
 
@@ -227,6 +232,12 @@ git clone https://github.com/autoswitch-accounts/chatgpt-codex-auto-switch.git &
 
 ```bash
 scripts/demo.sh
+```
+
+英文界面（假数据也换成英文）：
+
+```bash
+scripts/demo.sh -AppleLanguages '(en)'
 ```
 
 ## 第一次使用
@@ -303,6 +314,13 @@ ChatGPT 的登录分两半：网页登录状态存在每个槽位自己的资料
 </details>
 
 <details>
+<summary><b>同一个邮箱在两个团队空间里，重置券通用吗？</b></summary>
+
+不通用。券跟着账号（空间）走：同一个邮箱在 A、B 两个空间里各有各的券，id 也不一样，用一张只清空那个空间的额度。
+所以账号页、重置券清单里每个槽位列的都是它自己的券。
+</details>
+
+<details>
 <summary><b>支持哪些系统？Intel Mac 能用吗？</b></summary>
 
 macOS 14 Sonoma 及以后、Apple 芯片（M1 及以后）。所有 M 系列 Mac 都能免费升级到 macOS 14 以上。
@@ -374,8 +392,8 @@ WebKit 页面里用同一个账号的 token 发请求（`ChatGPTAccounts --web-f
 | `A.json` … `Z.json` | 各账号的凭证快照（文件名就是槽位字母，也是切号顺序） |
 | `names.json` / `lastused.json` | 自定义显示名 / 上次切走时间 |
 | `quota.json` | 各账号额度缓存 |
-| `autoswitch.json` | 自动切号开关 `enabled`、续答用语 `prompt`、停滞提醒 `stall_nudge`、切号顺序 `order`（`alpha` / `soon` / `most`）、自动开始计时 `auto_start`、结束后自动继续 `auto_continue` 和次数上限 `continue_max`、后台切号 `quiet_switch`、不参与轮换的槽位 `skip` |
-| `directory.json` | 账号目录：邮箱、重置券；空间的订阅、席位、成员、邀请 |
+| `autoswitch.json` | 自动切号开关 `enabled`、续答用语 `prompt`、停滞提醒 `stall_nudge`、切号顺序 `order`（`alpha` / `soon` / `most`）、自动开始计时 `auto_start`、结束后自动继续 `auto_continue` 和次数上限 `continue_max`、后台切号 `quiet_switch`、不参与轮换的槽位 `skip`、界面语言 `lang`（`zh` / `en`） |
+| `directory.json` | 账号目录：邮箱；每个槽位（空间）自己的重置券 `slotCredits`；空间的订阅、席位、成员、邀请 |
 | `meta.json` | 台账：`wechat`（邮箱 → 微信名）、`pay`（手动交费日）、`paid`（已交到哪一期）、`since`（开始记账的日子） |
 | `notices.json` | 消息中心（最多 500 条，带已读状态） |
 | `switch_history.json` | 每次切号的时间和槽位，用来标出对话跑在哪个账号 |
@@ -413,18 +431,21 @@ tail -f ~/Library/Application\ Support/codex-profiles/autoswitch.log
 
 ```text
 App/                 界面（SwiftUI + Liquid Glass）：概览 / 消息 / 账号 / 团队 / 成员 / 会话 / 日志 / 设置
+App/en.lproj/        英文译文（中文原文就是键）；Python 那边的译文在 engine.py / autoswitch.py 的 EN 表
 engine.py            账号引擎（App 和后台服务共用）
 autoswitch.py        后台服务：撞限 → 切号 / 等待 → 续答
 Assets/              App 图标（make_icon.swift 生成 appicon.icns）
 build.sh             从源码生成 App；默认无身份签名，可用 SIGN_IDENTITY 或 signing.local 换成自己的证书
 scripts/package.sh   打发布用的 zip（无身份签名，签名里带开发者信息就拒绝打包）
 scripts/demo.sh      用假数据打开 App（演示 / 截图）
+scripts/i18n_check.py 查英文界面有没有漏翻、漏包的文字
 .github/workflows/   推送 v* 标签时由 GitHub 自动编译、打包并发布
 ```
 
 ## 参与
 
-欢迎提 Issue 和 Pull Request。改界面后可以用 `scripts/demo.sh --page <页面>` 直接打开对应页面检查效果。
+欢迎提 Issue 和 Pull Request。改界面后可以用 `scripts/demo.sh --page <页面>` 直接打开对应页面检查效果；
+改了界面文字跑一下 `scripts/i18n_check.py`，看英文有没有漏翻。
 
 ## 许可证
 

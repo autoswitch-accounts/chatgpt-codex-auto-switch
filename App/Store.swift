@@ -125,6 +125,9 @@ final class Store: ObservableObject {
         reloadLogs()
         reloadNotices()
         Task { _ = await engine(["--ensure-daemon"]); reload() }
+        // 界面语言同步给 engine.py / autoswitch.py：之后新写的日志、通知、状态文字跟着走
+        if config.lang != AppLanguage.active { setConfig("lang", "\"\(AppLanguage.active)\"") }
+        Task.detached { _ = PhraseBook.shared.apply("") }      // 先读好中英对照表（显示旧消息、旧数据时用）
         refreshUsage()
         if directory.at == 0 || now - directory.at > 1800 { loadDirectory(refresh: true) }
     }
@@ -214,7 +217,7 @@ final class Store: ObservableObject {
     func hideTeam(_ w: Workspace, _ hide: Bool) {
         Task {
             _ = await engine([hide ? "--hide-team" : "--unhide-team", w.id])
-            say(hide ? "已从列表移除「\(w.displayName)」" : "已恢复「\(w.displayName)」")
+            say(hide ? L("已从列表移除「\(w.displayName)」") : L("已恢复「\(w.displayName)」"))
             loadDirectory(refresh: false)
         }
     }
@@ -229,7 +232,7 @@ final class Store: ObservableObject {
             if let d = Store.decode(out, Directory.self), d.at >= directory.at { directory = d }
             if refresh {
                 syncing = false
-                say("已同步 \(directory.workspaces.count) 个空间、\(directory.people.count) 个邮箱")
+                say(L("已同步 \(directory.workspaces.count) 个空间、\(directory.people.count) 个邮箱"))
                 reload()
                 reloadNotices()
             }
@@ -244,7 +247,7 @@ final class Store: ObservableObject {
     func setConfig(_ key: String, _ jsonValue: String) {
         Task {
             let r = Store.decode(await engine(["--set-config", key, jsonValue]), Simple.self)
-            if let r, !r.ok { say(r.err ?? "设置失败") }
+            if let r, !r.ok { say(r.err ?? L("设置失败")) }
             reload()
         }
     }
@@ -257,7 +260,7 @@ final class Store: ObservableObject {
     func restartDaemon() {
         Task {
             let r = Store.decode(await engine(["--ensure-daemon", "--restart"]), Simple.self)
-            say(r?.ok == true ? "后台服务已重启" : (r?.err ?? "重启失败"))
+            say(r?.ok == true ? L("后台服务已重启") : (r?.err ?? L("重启失败")))
             reload()
         }
     }
@@ -267,7 +270,7 @@ final class Store: ObservableObject {
     func reloadNotices() {
         Task {
             if let r = Store.decode(await engine(["--notices-json"]), NoticesPayload.self) {
-                notices = r.items
+                notices = await Task.detached { r.items.map { $0.localized() } }.value
                 unread = r.unread
             }
         }
@@ -294,10 +297,11 @@ final class Store: ObservableObject {
             let r = Store.decode(await engine(args), Simple.self)
             if r?.ok == true {
                 if !threads.isEmpty { _ = await engine(["--resume"] + threads) }
-                say((s.current ? "已重启 ChatGPT" : "已切到 \(s.email)")
-                    + (threads.isEmpty ? "" : "，稍后在 \(threads.count) 个对话里自动续答"))
+                let n = threads.count
+                say(s.current ? (n == 0 ? L("已重启 ChatGPT") : L("已重启 ChatGPT，稍后在 \(n) 个对话里自动续答"))
+                              : (n == 0 ? L("已切到 \(s.email)") : L("已切到 \(s.email)，稍后在 \(n) 个对话里自动续答")))
             } else {
-                say(r?.err ?? "切换失败")
+                say(r?.err ?? L("切换失败"))
             }
             busy = nil
             reload()
@@ -311,7 +315,7 @@ final class Store: ObservableObject {
 
     func remove(_ s: Slot) {
         Task {
-            if let r = Store.decode(await engine(["--delete", s.slot]), Simple.self), !r.ok { say(r.err ?? "删除失败") }
+            if let r = Store.decode(await engine(["--delete", s.slot]), Simple.self), !r.ok { say(r.err ?? L("删除失败")) }
             reload()
         }
     }
@@ -362,10 +366,10 @@ final class Store: ObservableObject {
               let arg = String(data: data, encoding: .utf8) else { return }
         Task {
             let r = Store.decode(await engine(["--set-thread", arg]), Simple.self)
-            if r?.ok == false { say(r?.err ?? "没改成"); return }
+            if r?.ok == false { say(r?.err ?? L("没改成")); return }
             let t = Date().timeIntervalSince1970
             for x in list { pendingSettings[x.thread] = (t, (pendingSettings[x.thread]?.s ?? [:]).merging(s) { $1 }) }
-            say((list.count == 1 ? "「\(list[0].displayTitle)」" : "\(list.count) 个对话") + "的设置已提交，下一轮起生效")
+            say(list.count == 1 ? L("「\(list[0].displayTitle)」的设置已提交，下一轮起生效") : L("\(list.count) 个对话的设置已提交，下一轮起生效"))
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             reloadSessions()
         }
@@ -376,7 +380,7 @@ final class Store: ObservableObject {
         guard !list.isEmpty else { return }
         Task {
             _ = await engine(["--continue"] + list.map(\.thread))
-            say(list.count == 1 ? "已在后台让「\(list[0].displayTitle)」继续" : "已在后台让 \(list.count) 个对话继续")
+            say(list.count == 1 ? L("已在后台让「\(list[0].displayTitle)」继续") : L("已在后台让 \(list.count) 个对话继续"))
             try? await Task.sleep(nanoseconds: 4_000_000_000)    // 守护进程 3 秒一轮，等它接手再刷新
             reloadSessions()
         }
@@ -387,8 +391,8 @@ final class Store: ObservableObject {
         guard !list.isEmpty else { return }
         Task {
             let r = Store.decode(await engine(["--pause"] + list.map(\.thread)), Simple.self)
-            if r?.ok == false { say(r?.err ?? "没能暂停"); return }
-            say(list.count == 1 ? "正在暂停「\(list[0].displayTitle)」" : "正在暂停 \(list.count) 个对话")
+            if r?.ok == false { say(r?.err ?? L("没能暂停")); return }
+            say(list.count == 1 ? L("正在暂停「\(list[0].displayTitle)」") : L("正在暂停 \(list.count) 个对话"))
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             reloadSessions()
         }
@@ -397,7 +401,7 @@ final class Store: ObservableObject {
     func resume(_ s: Session) {
         Task {
             _ = await engine(["--resume", s.thread])
-            say("已请后台在「\(s.displayTitle)」里发送「\(config.prompt)」")
+            say(L("已请后台在「\(s.displayTitle)」里发送「\(config.prompt)」"))
             reloadSessions()
         }
     }
@@ -410,7 +414,7 @@ final class Store: ObservableObject {
         busy = a.slot.slot
         Task {
             let r = Store.decode(await engine(["--reset-credit", a.slot.slot, a.credit.id]), Simple.self)
-            say(r?.ok == true ? "\(a.slot.email) 的额度已重置" : "重置失败：\(r?.err ?? "没有返回")")
+            say(r?.ok == true ? L("\(a.slot.email) 的额度已重置") : L("重置失败：\(r?.err ?? L("没有返回"))"))
             busy = nil
             reload()
             loadDirectory(refresh: false)
@@ -423,7 +427,7 @@ final class Store: ObservableObject {
         busy = s.slot
         Task {
             let r = Store.decode(await engine(["--start-window", s.slot]), Simple.self)
-            say(r?.ok == true ? "\(s.email) 的 5 小时额度已开始计时" : "没能开始计时：\(r?.err ?? "没有返回")")
+            say(r?.ok == true ? L("\(s.email) 的 5 小时额度已开始计时") : L("没能开始计时：\(r?.err ?? L("没有返回"))"))
             busy = nil
             reload()
         }
@@ -456,10 +460,11 @@ final class Store: ObservableObject {
             if undo { args.append("--undo") }
             let res = Store.decode(await engine(args), Simple.self)
             if res?.ok == true {
-                say(undo ? "已撤销 \(r.email) 上一期的已交标记"
-                         : "\(r.wechat.isEmpty ? r.email : r.wechat) \(TimeText.date(r.nextPay).dropFirst(5)) 这期已交，下次顺延一个月")
+                let who = r.wechat.isEmpty ? r.email : r.wechat, day = String(TimeText.date(r.nextPay).dropFirst(5))
+                say(undo ? L("已撤销 \(r.email) 上一期的已交标记")
+                         : L("\(who) \(day) 这期已交，下次顺延一个月"))
             } else {
-                say("没能标记：\(res?.err ?? "没有返回")")
+                say(L("没能标记：\(res?.err ?? L("没有返回"))"))
             }
             loadDirectory(refresh: false)
             reloadNotices()
@@ -515,8 +520,9 @@ final class Store: ObservableObject {
             }
         }
         rows.sort { $0.0 < $1.0 }                 // sort 稳定：同一秒内保持各自文件里的先后
+        // 以前按另一种语言写下的日志，按当前语言重写
         return rows.suffix(limit).enumerated().map { LogLine(id: $0.offset, time: $0.element.0,
-                                                             text: $0.element.1, source: $0.element.2) }
+                                                             text: PhraseBook.shared.apply($0.element.1), source: $0.element.2) }
     }
 
     // MARK: 添加账号
@@ -532,15 +538,15 @@ final class Store: ObservableObject {
             // 先定下新槽位，才能用它自己的 profile 开窗登录（会话必须和凭证成对）
             let sl = Store.decode(await engine(["--next-slot"]), Simple.self)
             guard let sl, sl.ok, let slot = sl.slot else {
-                addPhase = .failed(sl?.err ?? "没有空槽位"); return
+                addPhase = .failed(sl?.err ?? L("没有空槽位")); return
             }
-            addPhase = .working("正在保存当前凭证并退出 ChatGPT…")
+            addPhase = .working(L("正在保存当前凭证并退出 ChatGPT…"))
             let out = await engine(["--auto-begin", slot])
             guard let r = Store.decode(out, Simple.self), r.ok else {
-                addPhase = .failed(Store.decode(out, Simple.self)?.err ?? "退出或登出失败")
+                addPhase = .failed(Store.decode(out, Simple.self)?.err ?? L("退出或登出失败"))
                 return
             }
-            addPhase = .working("已打开一个干净的 ChatGPT 窗口，请在里面登录并选择 workspace…")
+            addPhase = .working(L("已打开一个干净的 ChatGPT 窗口，请在里面登录并选择 workspace…"))
             // 登录这一步整个让位给 ChatGPT，否则登录页被压在下面点不到；想中途取消就点 Dock 图标
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             AppWindow.stepAsideForLogin()
@@ -558,7 +564,7 @@ final class Store: ObservableObject {
                 let out = await self.engine(["--current-json"])
                 guard let c = Store.decode(out, Current.self),
                       !c.acct.isEmpty, c.who != self.baseline else { continue }
-                self.addPhase = .working("已登录 \(c.email)，正在收取凭证…")
+                self.addPhase = .working(L("已登录 \(c.email)，正在收取凭证…"))
                 AppWindow.comeBack()
                 let r = Store.decode(await self.engine(["--capture"]), Simple.self)
                 if let r, r.ok, let slot = r.slot {
@@ -566,7 +572,7 @@ final class Store: ObservableObject {
                     self.loadDirectory(refresh: true)        // 顺便拿到官方 workspace 名和订阅
                     self.addPhase = .naming(slot, r.email ?? c.email, r.plan ?? c.plan)
                 } else {
-                    self.addPhase = .failed(r?.err ?? "收取凭证失败")
+                    self.addPhase = .failed(r?.err ?? L("收取凭证失败"))
                 }
                 return
             }

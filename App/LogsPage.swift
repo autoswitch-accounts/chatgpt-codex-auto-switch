@@ -37,7 +37,7 @@ struct LogsPage: View {
         }
         .navigationTitle("日志")
         .navigationSubtitle("后台服务 + 账号操作，按时间倒序")
-        .pageToolbar(search: $query, prompt: "搜索日志") {
+        .pageToolbar(search: $query, prompt: L("搜索日志")) {
             Button {
                 NSWorkspace.shared.activateFileViewerSelecting([Store.dataDir.appendingPathComponent("autoswitch.log")])
             } label: { Label("在访达中显示", systemImage: "folder") }
@@ -57,10 +57,12 @@ struct LogRow: View {
             Text(compact ? String(l.time.dropFirst(5)) : l.time)
                 .font(.system(size: compact ? 11 : 12.5).monospacedDigit()).foregroundStyle(.secondary)
                 .frame(width: compact ? 90 : 150, alignment: .leading)
-            Text(l.source.rawValue)
+            Text(LogRow.sourceText(l.source))
                 .font(.system(size: compact ? 10 : 11.5, weight: .medium))
                 .foregroundStyle(l.source == .auto ? Palette.purple : Palette.gray)
-                .frame(width: compact ? 50 : 64, alignment: .leading)
+                .lineLimit(1)
+                // 英文「Auto-switch」比「自动切号」宽，来源列在英文界面放宽一点；中文维持原宽
+                .frame(width: AppLanguage.active == "en" ? (compact ? 64 : 80) : (compact ? 50 : 64), alignment: .leading)
             Circle().fill(tone ?? .clear).frame(width: 7, height: 7)
             Text(l.text)
                 .font(compact ? .callout : .system(size: 14)).lineSpacing(compact ? 0 : 3)
@@ -70,12 +72,28 @@ struct LogRow: View {
         }
     }
 
+    /// 来源显示名：rawValue 是中文（不改），显示时查表
+    static func sourceText(_ s: LogLine.Source) -> String {
+        switch s {
+        case .auto: return L("自动切号")
+        case .manager: return L("账号操作")
+        }
+    }
+
+    // 关键词：中文日志（含以前写下的旧日志）和英文日志都认，英文不区分大小写。
+    // 英文词和 engine.py / autoswitch.py 的英文日志约定一致
+    private static let red = ["失败", "放弃", "错误", "error", "failed", "gave up"]  // i18n-ignore
+    private static let orange = ["等待", "已耗尽", "停滞", "没有新进展", "waiting", "exhausted", "stalled", "no new progress"]  // i18n-ignore
+    private static let green = ["续答成功", "已恢复", "resume succeeded", "recovered"]  // i18n-ignore
+    private static let blue = ["切到", "切换", "切号", "switched to", "switching", "switch"]  // i18n-ignore
+
     /// 关键事件着色：失败红、等待橙、续答成功绿、切号蓝；普通行不标
     static func tone(_ t: String) -> Color? {
-        if t.contains("ERROR") || t.contains("失败") || t.contains("放弃") || t.contains("错误") { return Palette.red }
-        if t.contains("等待") || t.contains("已耗尽") || t.contains("停滞") || t.contains("没有新进展") { return Palette.orange }
-        if t.contains("续答成功") || t.contains("已恢复") { return Palette.green }
-        if t.contains("切到") || t.contains("切换") || t.contains("切号") { return Palette.accent }
+        func has(_ ks: [String]) -> Bool { ks.contains { t.range(of: $0, options: .caseInsensitive) != nil } }
+        if has(red) { return Palette.red }
+        if has(orange) { return Palette.orange }
+        if has(green) { return Palette.green }
+        if has(blue) { return Palette.accent }
         return nil
     }
 }

@@ -82,7 +82,7 @@ struct Slot: Identifiable, Decodable, Equatable {
     var title: String {
         if !name.isEmpty { return name }
         if !workspace.isEmpty { return workspace }
-        return plan == "team" ? String(acct.prefix(8)) : "个人空间"
+        return plan == "team" ? String(acct.prefix(8)) : L("个人空间")
     }
     var planLabel: String { Slot.planLabel(plan) }
     /// 这个人在空间里的席位档位：同一个团队空间里，有人是普通席位（plan_type team），
@@ -140,7 +140,8 @@ struct AutoConfig: Decodable {
     var continue_max: Int
     var quiet_switch: Bool
     var skip: [String]
-    static let empty = AutoConfig(enabled: false, prompt: "继续", stall_nudge: true, order: "alpha", auto_start: false,
+    var lang: String? = nil      // 界面语言 zh / en，App 启动时同步过去（见 AppLanguage）
+    static let empty = AutoConfig(enabled: false, prompt: "继续", stall_nudge: true, order: "alpha", auto_start: false,  // i18n-ignore
                                   auto_continue: false, continue_max: 5, quiet_switch: true, skip: [])
 }
 
@@ -167,7 +168,7 @@ struct Session: Identifiable, Decodable {
     var tier: String?
     var id: String { thread }
     var fast: Bool { tier == "priority" }
-    var displayTitle: String { title.isEmpty ? "未命名对话 · \(thread.prefix(8))" : title }
+    var displayTitle: String { title.isEmpty ? L("未命名对话 · \(String(thread.prefix(8)))") : title }
     var isActive: Bool { status == "running" || status == "stalled" }
     /// 可以点「继续」：没在跑（运行中 / 疑似卡住的不打断）
     var canContinue: Bool { !isActive }
@@ -193,16 +194,26 @@ struct ModelInfo: Decodable, Identifiable, Hashable {
 
     // 以下叫法照 ChatGPT 自己的中文界面（推理强度、速度菜单）
     static func effortName(_ e: String) -> String {
-        ["none": "无", "minimal": "极低", "low": "轻度", "medium": "中", "high": "高", "xhigh": "极高", "max": "Max", "ultra": "Ultra"][e] ?? e
+        switch e {
+        case "none": return L("无")
+        case "minimal": return L("极低")
+        case "low": return L("轻度")
+        case "medium": return L("中")
+        case "high": return L("高")
+        case "xhigh": return L("极高")
+        case "max": return "Max"
+        case "ultra": return "Ultra"
+        default: return e
+        }
     }
 
-    static let speedTitle = "速度"
-    static func tierName(_ t: String) -> String { t == "priority" ? "快速" : "标准" }
+    static var speedTitle: String { L("速度") }
+    static func tierName(_ t: String) -> String { t == "priority" ? L("快速") : L("标准") }
     /// 菜单里的一项：名称 · 说明（快速档写几倍速）
     static func tierLine(_ t: String, speed: Double?) -> String {
-        guard t == "priority" else { return "标准 · 默认速度" }
-        guard let x = speed, x > 0 else { return "快速 · 速度更快，用量更高" }
-        return "快速 · \(x.formatted(.number.precision(.fractionLength(0...1)))) 倍速度，用量更多"
+        guard t == "priority" else { return L("标准 · 默认速度") }
+        guard let x = speed, x > 0 else { return L("快速 · 速度更快，用量更高") }
+        return L("快速 · \(x.formatted(.number.precision(.fractionLength(0...1)))) 倍速度，用量更多")
     }
 }
 
@@ -233,13 +244,13 @@ struct Subscription: Decodable, Hashable {
         if cancelsAt > 0 { return cancelsAt }
         return willRenew ? renewsAt : expiresAt
     }
-    var nextLabel: String { !active ? "未订阅" : (willRenew && cancelsAt == 0 ? "续费" : "到期") }
+    var nextLabel: String { !active ? L("未订阅") : (willRenew && cancelsAt == 0 ? L("续费") : L("到期")) }
     var billingText: String {
-        switch billing { case "monthly": return "月付"; case "yearly", "annual": return "年付"; default: return billing }
+        switch billing { case "monthly": return L("月付"); case "yearly", "annual": return L("年付"); default: return billing }
     }
     var platformText: String {
         switch platform {
-        case "chatgpt_web": return "网页"
+        case "chatgpt_web": return L("网页")
         case "chatgpt_mobile_android": return "Android"
         case "chatgpt_mobile_ios": return "iOS"
         default: return platform
@@ -292,10 +303,10 @@ struct Workspace: Identifiable, Decodable, Hashable {
     var isTeam: Bool { structure == "workspace" }
     var displayName: String {
         if !name.isEmpty { return name }
-        return "个人空间 · \(access.first?.email ?? "")"
+        return L("个人空间 · \(access.first?.email ?? "")")
     }
     /// 账号表、详情里用：每行已经有邮箱了，个人空间就不再带邮箱
-    var shortName: String { isTeam || !name.isEmpty ? displayName : "个人空间" }
+    var shortName: String { isTeam || !name.isEmpty ? displayName : L("个人空间") }
     /// 空间的套餐名（官方名，没有就按 plan 推）。注意这是空间级的；同一空间里每个人的席位档位可能不同，见 Slot.seatTier
     var planTitle: String { planName.isEmpty ? Slot.planLabel(plan) : planName }
     var myRole: String { access.first.map { Workspace.roleText($0.role) } ?? "" }
@@ -308,9 +319,10 @@ struct Workspace: Identifiable, Decodable, Hashable {
 
     static func roleText(_ r: String) -> String {
         switch r {
-        case "account-owner": return "所有者"
-        case "account-admin", "admin": return "管理员"
-        case "standard-user": return "成员"
+        case "account-owner": return L("所有者")
+        case "account-admin", "admin": return L("管理员")
+        // 「成员」这个键在侧栏是页名（英文 Members），角色要单数
+        case "standard-user": return L("成员#角色", zh: "成员")
         default: return r
         }
     }
@@ -332,10 +344,8 @@ struct Person: Decodable, Hashable, Identifiable {
     let mfa: Bool
     let country: String
     let slots: [String]
-    let resetCredits: [ResetCredit]
     let wechat: String?
     var id: String { email }
-    var availableResets: [ResetCredit] { resetCredits.filter { $0.status == "available" } }
 }
 
 struct Directory: Decodable {
@@ -344,6 +354,11 @@ struct Directory: Decodable {
     let workspaces: [Workspace]
     let errors: [String]
     var hidden: [String]? = nil          // 团队页里手动移除的空间 id（只是不显示）
+    /// 槽位 → 重置券。券跟着账号（空间）走，同一邮箱的不同空间各有各的券，id 也不同
+    var slotCredits: [String: [ResetCredit]]? = nil
+    func credits(_ slot: String) -> [ResetCredit] { slotCredits?[slot] ?? [] }
+    func availableResets(_ slot: String) -> [ResetCredit] { credits(slot).filter { $0.status == "available" } }
+    var allAvailableResets: [ResetCredit] { (slotCredits ?? [:]).values.flatMap { $0 }.filter { $0.status == "available" } }
     static let empty = Directory(at: 0, people: [], workspaces: [], errors: [])
 
     func workspace(_ id: String) -> Workspace? { workspaces.first { $0.id == id } }
@@ -367,6 +382,14 @@ struct Notice: Identifiable, Decodable, Hashable {
 
 struct NoticesPayload: Decodable { let items: [Notice]; let unread: Int }
 
+extension Notice {
+    /// 按当前语言重写标题和正文（以前按另一种语言写下的消息）
+    func localized() -> Notice {
+        Notice(id: id, kind: kind, level: level, title: PhraseBook.shared.apply(title), body: PhraseBook.shared.apply(body),
+               at: at, created: created, read: read, ws: ws, slot: slot)
+    }
+}
+
 struct Simple: Decodable { let ok: Bool; let err: String?; let slot: String?; let email: String?; let plan: String? }
 struct Current: Decodable {
     let acct: String; let user: String?; let email: String; let plan: String; let known: Bool
@@ -376,7 +399,7 @@ struct Current: Decodable {
 
 /// 一行日志
 struct LogLine: Identifiable {
-    enum Source: String { case auto = "自动切号", manager = "账号操作" }
+    enum Source: String { case auto = "自动切号", manager = "账号操作" }  // i18n-ignore  显示时由 LogsPage 查表
     let id: Int
     let time: String
     let text: String
@@ -395,7 +418,8 @@ enum TimeText {
         let d = Date(timeIntervalSince1970: epoch)
         let cal = Calendar.current
         if cal.isDateInToday(d) { return hm.string(from: d) }
-        if cal.isDateInTomorrow(d) { return "明天 " + hm.string(from: d) }
+        // 英文「Tomorrow 18:52」在表格窄列里放不下，直接写日期（和别的日期列一样）
+        if cal.isDateInTomorrow(d) && AppLanguage.active != "en" { return L("明天 \(hm.string(from: d))") }
         return mdhm.string(from: d)
     }
 
@@ -408,29 +432,29 @@ enum TimeText {
         let d = Date(timeIntervalSince1970: epoch), tz = TimeZone.current
         let h = Double(tz.secondsFromGMT(for: d)) / 3600
         let off = h == h.rounded() ? String(format: "%+d", Int(h)) : String(format: "%+.1f", h)
-        return ymd.string(from: d) + " " + hm.string(from: d) + "（本机时区 \(tz.identifier)，UTC\(off)）"
+        return ymd.string(from: d) + " " + hm.string(from: d) + L("（本机时区 \(tz.identifier)，UTC\(off)）")
     }
 
     /// 「3 分钟前」「2 小时前」
     static func ago(_ epoch: Double, now: Double = Date().timeIntervalSince1970) -> String {
         let s = max(0, now - epoch)
-        if s < 60 { return "刚刚" }
-        if s < 3600 { return "\(Int(s / 60)) 分钟前" }
-        if s < 86400 { return "\(Int(s / 3600)) 小时前" }
-        return "\(Int(s / 86400)) 天前"
+        if s < 60 { return L("刚刚") }
+        if s < 3600 { return L("\(Int(s / 60)) 分钟前") }
+        if s < 86400 { return L("\(Int(s / 3600)) 小时前") }
+        return L("\(Int(s / 86400)) 天前")
     }
 
     /// 「1 小时 5 分」
     static func span(_ seconds: Double) -> String {
         let m = Int(max(0, seconds) / 60)
-        if m < 60 { return "\(m) 分钟" }
-        if m < 1440 { return "\(m / 60) 小时 \(m % 60) 分" }
-        return "\(m / 1440) 天 \(m % 1440 / 60) 小时"
+        if m < 60 { return L("\(m) 分钟") }
+        if m < 1440 { return L("\(m / 60) 小时 \(m % 60) 分") }
+        return L("\(m / 1440) 天 \(m % 1440 / 60) 小时")
     }
 
     /// 「还有 1 小时 5 分」
     static func until(_ epoch: Double, now: Double) -> String {
-        epoch <= now ? "已到" : "还有 " + span(epoch - now)
+        epoch <= now ? L("已到") : L("还有 \(span(epoch - now))")
     }
 
     /// 距今天数（向上取整），用于「3 天后续费」

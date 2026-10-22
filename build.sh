@@ -25,15 +25,21 @@ mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 xcrun swiftc -O -target arm64-apple-macos$MIN_MACOS -parse-as-library App/*.swift -o "$OUT/Contents/MacOS/ChatGPTAccounts"
 cp engine.py autoswitch.py "$OUT/Contents/Resources/"
 cp Assets/appicon.icns "$OUT/Contents/Resources/appicon.icns"   # 图标由 Assets/make_icon.swift 生成
+# 界面文字：中文原文当键，en.lproj 放英文译文；zh-Hans.lproj 只放 App 名（中文直接用键本身）
+for l in App/*.lproj; do
+    cp -R "$l" "$OUT/Contents/Resources/"
+    for f in "$OUT/Contents/Resources/$(basename "$l")"/*; do plutil -lint -s "$f"; done
+done
 
-# 系统菜单（关于 / 隐藏 / 退出 / 编辑）跟着 App 声明的语言走，不声明就是英文
+# 系统菜单（关于 / 隐藏 / 退出 / 编辑）跟着 App 声明的语言走：中文界面是中文菜单，英文界面是英文菜单
 cat > "$OUT/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
-  <key>CFBundleLocalizations</key><array><string>zh-Hans</string></array>
+  <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
+  <key>LSHasLocalizedDisplayName</key><true/>
   <key>CFBundleDisplayName</key><string>$NAME</string>
   <key>CFBundleName</key><string>$NAME</string>
   <key>CFBundleExecutable</key><string>ChatGPTAccounts</string>

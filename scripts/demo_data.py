@@ -24,6 +24,14 @@ eng = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eng)
 assert eng.P.startswith(DEST)
 
+# 英文界面的演示（demo.sh -AppleLanguages '(en)' 时 DEMO_LANG=en）：名字、日志、消息、对话标题也用英文
+EN = os.environ.get("DEMO_LANG") == "en"
+
+
+def X(zh, en):
+    return en if EN else zh
+
+
 NOW = time.time()
 H, D = 3600, 86400
 TODAY = datetime.date.today()
@@ -61,7 +69,7 @@ SLOTS = [
     ("H", "old.account@example.com", ws_id(14), "plus", -1),
 ]
 CURRENT = "C"
-NAMES = {"A": "主力", "C": "设计组", "E": "Pro 备用"}
+NAMES = {"A": X("主力", "Main"), "C": X("设计组", "Design"), "E": X("Pro 备用", "Pro Spare")}
 
 # 额度：(5 小时已用 %, 5 小时还剩多久重置, 本周已用 %, 本周还剩多久重置)
 QUOTA = {
@@ -101,7 +109,7 @@ q = {}
 for s, (p_used, p_left, w_used, w_left) in QUOTA.items():
     if s == "H":
         q[s] = {"at": NOW - 2 * D, "src": "api", "primary": None, "secondary": None,
-                "reached": False, "error": "凭证过期，切到这个账号一次即可刷新", "error_at": NOW - 2 * D}
+                "reached": False, "error": X("凭证过期，切到这个账号一次即可刷新", "Credentials expired; switch to this account once to refresh"), "error_at": NOW - 2 * D}
         continue
     q[s] = {"at": NOW - 90, "src": "api",
             "primary": {"used": float(p_used), "reset_at": int(NOW + p_left), "window": 5 * H},
@@ -110,9 +118,9 @@ for s, (p_used, p_left, w_used, w_left) in QUOTA.items():
             "limit_type": "rate_limit_reached" if p_used >= 100 or w_used >= 100 else "",
             "resets": {"A": 2, "C": 1}.get(s, 0)}
 eng.write_json(eng.QUOTA, q)
-eng.write_json(eng.CONFIG, {"enabled": True, "prompt": "继续", "stall_nudge": True, "order": "soon",
+eng.write_json(eng.CONFIG, {"enabled": True, "prompt": X("继续", "Continue"), "stall_nudge": True, "order": "soon",
                             "auto_start": True, "auto_continue": True, "continue_max": 5,
-                            "quiet_switch": True, "skip": ["G"]})
+                            "quiet_switch": True, "skip": ["G"], "lang": X("zh", "en")})
 eng.write_json(eng.STATE, {"queue": [], "wait": None, "last_switch_at": NOW - 42 * 60, "nudged": {},
                            "switching": None, "status": {"phase": "idle", "text": ""}, "heartbeat": NOW})
 
@@ -133,7 +141,7 @@ def member(mail, name, joined_days_ago, role="standard-user", left_days_ago=0):
 
 
 workspaces = [
-    {"id": TEAMS["polaris"], "name": "北极星工作室", "structure": "workspace", "plan": "team",
+    {"id": TEAMS["polaris"], "name": X("北极星工作室", "Polaris Studio"), "structure": "workspace", "plan": "team",
      "planName": "Business", "deactivated": False, "created": NOW - 200 * D, "slots": ["A"],
      "access": [{"email": "lin.studio@example.com", "role": "account-owner", "viaSlot": "A"}],
      "sub": sub(renew_in=2, seats=(7, 10)),
@@ -172,14 +180,14 @@ for s, mail, acct, plan, days in SLOTS:
                            "sub": sub(active=days > 0, renew_in=max(days, 1), plan=plan),
                            "members": None, "invites": [], "errors": []})
 # F 只是别人团队里的普通成员：看不到成员列表
-workspaces.append({"id": TEAMS["night"], "name": "夜班小组", "structure": "workspace", "plan": "team",
+workspaces.append({"id": TEAMS["night"], "name": X("夜班小组", "Night Shift"), "structure": "workspace", "plan": "team",
                    "planName": "Business", "deactivated": False, "created": NOW - 70 * D, "slots": ["F"],
                    "access": [{"email": "night.owl@example.com", "role": "standard-user", "viaSlot": "F"}],
                    "sub": sub(renew_in=11, seats=(0, 0)), "members": None, "invites": [], "errors": []})
 
 
 def credit(n, expires_in, status="available"):
-    return {"id": f"demo-credit-{n}", "title": "免费额度重置", "status": status,
+    return {"id": f"demo-credit-{n}", "title": X("免费额度重置", "Free usage reset"), "status": status,
             "expiresAt": NOW + expires_in * D, "grantedAt": NOW - 10 * D}
 
 
@@ -188,18 +196,18 @@ for mail in sorted({m for _, m, *_ in SLOTS}):
     people.append({"email": mail, "name": mail.split("@")[0].split(".")[0].title(),
                    "userId": "user-" + uuid.uuid5(uuid.NAMESPACE_URL, "p" + mail).hex[:20],
                    "created": NOW - 400 * D, "mfa": True, "country": "US",
-                   "slots": [s for s, m, *_ in SLOTS if m == mail],
-                   "resetCredits": {"lin.studio@example.com": [credit(1, 2), credit(2, 20)],
-                                    "maya.design@example.com": [credit(3, 12), credit(4, -3, "redeemed")]
-                                    }.get(mail, [])})
-directory = {"at": NOW - 4 * 60, "people": people, "workspaces": workspaces, "errors": []}
+                   "slots": [s for s, m, *_ in SLOTS if m == mail]})
+# 券跟着槽位（空间）走：同一邮箱的 A、B 各有各的券
+slot_credits = {"A": [credit(1, 2), credit(2, 20)], "B": [credit(5, 6)],
+                "C": [credit(3, 12), credit(4, -3, "redeemed")]}
+directory = {"at": NOW - 4 * 60, "people": people, "workspaces": workspaces, "slotCredits": slot_credits, "errors": []}
 eng.write_json(eng.DIRECTORY, directory)
 
 # ---------- 成员台账：微信名、交费 ----------
-wechat = {"chen.yu@example.net": "陈宇", "sophie.w@example.net": "Sophie", "jamie.k@example.net": "阿杰",
-          "leo.zhang@example.net": "Leo 张", "hana.s@example.net": "花子", "nora.l@example.org": "Nora",
-          "tom.g@example.org": "汤姆", "ivy.q@example.org": "Ivy", "alice.m@example.org": "爱丽丝",
-          "ben.r@example.org": "小本", "lin.studio@example.com": "林"}
+wechat = {"chen.yu@example.net": X("陈宇", "Chen Yu"), "sophie.w@example.net": "Sophie", "jamie.k@example.net": X("阿杰", "Jay"),
+          "leo.zhang@example.net": X("Leo 张", "Leo Z"), "hana.s@example.net": X("花子", "Hana"), "nora.l@example.org": "Nora",
+          "tom.g@example.org": X("汤姆", "Tom"), "ivy.q@example.org": "Ivy", "alice.m@example.org": X("爱丽丝", "Alice"),
+          "ben.r@example.org": X("小本", "Benny"), "lin.studio@example.com": X("林", "Lin")}
 since = TODAY
 paid = {}
 
@@ -229,13 +237,17 @@ eng.write_json(eng.HISTORY, hist)
 
 notices = [
     {"id": "evt:switch:1", "kind": "switch", "level": "info", "at": NOW - 42 * 60,
-     "title": "lin.studio@example.com 的 5 小时额度用完，已切到 maya.design@example.com",
-     "body": "槽 A → 槽 C · 自动切号", "slot": "C"},
+     "title": X("lin.studio@example.com 的 5 小时额度用完，已切到 maya.design@example.com",
+                "lin.studio@example.com used up its 5-hour limit; switched to maya.design@example.com"),
+     "body": X("槽 A → 槽 C · 自动切号", "Slot A → slot C · auto-switch"), "slot": "C"},
     {"id": "evt:session:1", "kind": "session", "level": "info", "at": NOW - 40 * 60,
-     "title": "已在 2 个对话里发送「继续」", "body": "落地页改版：首屏动效、API 网关限流重构", "slot": "C"},
+     "title": X("已在 2 个对话里发送「继续」", "Sent “Continue” in 2 conversations"),
+     "body": X("落地页改版：首屏动效、API 网关限流重构", "Landing page redesign: hero animation, API gateway rate-limit refactor"),
+     "slot": "C"},
     {"id": "evt:quota:1", "kind": "quota", "level": "warn", "at": NOW - 3 * H,
-     "title": "night.owl@example.com 本周额度已用完", "body": "槽 F · 预计 " +
-     time.strftime("%m-%d %H:%M", time.localtime(NOW + 2.6 * D)) + " 恢复", "slot": "F"},
+     "title": X("night.owl@example.com 本周额度已用完", "night.owl@example.com used up its weekly limit"),
+     "body": X("槽 F · 预计 {t} 恢复", "Slot F · expected back {t}").format(
+         t=time.strftime("%m-%d %H:%M", time.localtime(NOW + 2.6 * D))), "slot": "F"},
 ]
 eng.add_notices(notices)
 eng.add_notices(eng.directory_notices(directory, NOW))
@@ -254,25 +266,33 @@ def stamp(t):
 
 
 manager = [
-    (NOW - 9 * H, "切换 night.owl@example.com → ops.hub@example.com (槽 E / demo0005)"),
-    (NOW - 5.5 * H, "槽 A 凭证刷新：仍有效（剩 312 分钟），跳过"),
-    (NOW - 5.5 * H, "切换 ops.hub@example.com → lin.studio@example.com (槽 A / demo0001)"),
-    (NOW - 3 * H, "同步账号目录：6 个邮箱、7 个空间，新消息 2 条"),
-    (NOW - 42 * 60, "槽 C 凭证刷新：仍有效（剩 540 分钟），跳过"),
-    (NOW - 42 * 60, "切换 lin.studio@example.com → maya.design@example.com (槽 C / demo0002)"),
-    (NOW - 30 * 60, "同步账号目录：6 个邮箱、7 个空间，新消息 0 条"),
-    (NOW - 10 * 60, "成员台账 pay 已交 jamie.k@example.net"),
+    (NOW - 9 * H, X("切换 night.owl@example.com → ops.hub@example.com (槽 E / demo0005)",
+                    "Switched night.owl@example.com → ops.hub@example.com (slot E / demo0005)")),
+    (NOW - 5.5 * H, X("槽 A 凭证刷新：仍有效（剩 312 分钟），跳过", "Slot A credential refresh: still valid (312 min left), skipped")),
+    (NOW - 5.5 * H, X("切换 ops.hub@example.com → lin.studio@example.com (槽 A / demo0001)",
+                      "Switched ops.hub@example.com → lin.studio@example.com (slot A / demo0001)")),
+    (NOW - 3 * H, X("同步账号目录：6 个邮箱、7 个空间，新消息 2 条",
+                    "Synced account directory: emails 6, workspaces 7, new messages 2")),
+    (NOW - 42 * 60, X("槽 C 凭证刷新：仍有效（剩 540 分钟），跳过", "Slot C credential refresh: still valid (540 min left), skipped")),
+    (NOW - 42 * 60, X("切换 lin.studio@example.com → maya.design@example.com (槽 C / demo0002)",
+                      "Switched lin.studio@example.com → maya.design@example.com (slot C / demo0002)")),
+    (NOW - 30 * 60, X("同步账号目录：6 个邮箱、7 个空间，新消息 0 条",
+                      "Synced account directory: emails 6, workspaces 7, new messages 0")),
+    (NOW - 10 * 60, X("成员台账 pay 已交 jamie.k@example.net", "Member ledger: marked jamie.k@example.net as paid")),
 ]
 auto = [
-    (NOW - 44 * 60, "落地页改版：首屏动效 撞限（额度已用满），当前槽 A"),
-    (NOW - 44 * 60, "联网确认：槽 A 5 小时已用 100%，切到下一个可用账号"),
-    (NOW - 43 * 60, "候选：C 5h 剩 100%（剩余最多优先）"),
-    (NOW - 42 * 60, "已切到槽 C，等待 ChatGPT 就绪"),
-    (NOW - 41 * 60, "总线就绪，续答队列 2 个对话"),
-    (NOW - 40 * 60, "已在「落地页改版：首屏动效」发送「继续」"),
-    (NOW - 40 * 60, "已在「API 网关限流重构」发送「继续」"),
-    (NOW - 12 * 60, "额度刷新：8 个账号，可用 5 个"),
-    (NOW - 2 * 60, "额度刷新：当前槽 C 5 小时已用 58%"),
+    (NOW - 44 * 60, X("落地页改版：首屏动效 撞限（额度已用满），当前槽 A",
+                      "Landing page redesign: hero animation hit the limit (usage full), current slot A")),
+    (NOW - 44 * 60, X("联网确认：槽 A 5 小时已用 100%，切到下一个可用账号",
+                      "Confirmed online: slot A 5-hour 100% used, switching to the next available account")),
+    (NOW - 43 * 60, X("候选：C 5h 剩 100%（剩余最多优先）", "Candidate: C 5h 100% left (most left first)")),
+    (NOW - 42 * 60, X("已切到槽 C，等待 ChatGPT 就绪", "Switched to slot C, waiting for ChatGPT to be ready")),
+    (NOW - 41 * 60, X("总线就绪，续答队列 2 个对话", "Bus ready, conversations in the resume queue: 2")),
+    (NOW - 40 * 60, X("已在「落地页改版：首屏动效」发送「继续」",
+                      "Sent “Continue” in “Landing page redesign: hero animation”")),
+    (NOW - 40 * 60, X("已在「API 网关限流重构」发送「继续」", "Sent “Continue” in “API gateway rate-limit refactor”")),
+    (NOW - 12 * 60, X("额度刷新：8 个账号，可用 5 个", "Usage refreshed: 8 accounts, 5 available")),
+    (NOW - 2 * 60, X("额度刷新：当前槽 C 5 小时已用 58%", "Usage refreshed: current slot C 5-hour 58% used")),
 ]
 with open(eng.LOG, "w", encoding="utf-8") as f:
     f.writelines(f"{stamp(t)}  {m}\n" for t, m in manager)
@@ -312,22 +332,22 @@ def rollout(title, project, last, events, parent=None, tid=None, cfg=("gpt-6.1-s
 titles = []
 limit_err = {"error": {"codex_error_info": "usage_limit_exceeded",
                        "message": "You've hit your usage limit. Try again later."}}
-main = rollout("落地页改版：首屏动效", "landing-page", NOW - 50,
+main = rollout(X("落地页改版：首屏动效", "Landing page redesign: hero animation"), "landing-page", NOW - 50,
                [(400, "task_complete", {}), (300, "task_started", {"turn_id": "t2"})])
 rollout("", "landing-page", NOW - 80, [(200, "task_started", {"turn_id": "s1"})], parent=main)
 rollout("", "landing-page", NOW - 400, [(200, "task_started", {"turn_id": "s2"}), (100, "task_complete", {})], parent=main)
-rollout("API 网关限流重构", "api-gateway", NOW - 6 * 60,
+rollout(X("API 网关限流重构", "API gateway rate-limit refactor"), "api-gateway", NOW - 6 * 60,
         [(900, "task_started", {"turn_id": "t1"}), (0, "task_complete", {})], cfg=("gpt-6.1-sol", "xhigh", "priority"))
-rollout("修复 iOS 推送证书过期", "mobile-app", NOW - 47 * 60,
+rollout(X("修复 iOS 推送证书过期", "Fix expired iOS push certificate"), "mobile-app", NOW - 47 * 60,
         [(300, "task_started", {"turn_id": "t1"}), (0, "task_complete", limit_err)])
-rollout("周报数据看板", "analytics", NOW - 3.2 * H,
+rollout(X("周报数据看板", "Weekly report dashboard"), "analytics", NOW - 3.2 * H,
         [(1200, "task_started", {"turn_id": "t1"}), (0, "task_complete", {})], cfg=("gpt-6-luna", "medium", "default"))
-paused = rollout("数据库迁移脚本", "backend", NOW - 6.5 * H,
+paused = rollout(X("数据库迁移脚本", "Database migration script"), "backend", NOW - 6.5 * H,
                  [(500, "task_started", {"turn_id": "t1"}), (0, "turn_aborted", {})])
 st = eng.read_json(eng.STATE, {})
 st["paused"] = {paused: NOW - 6.5 * H}          # 在会话页点过「暂停」：显示「本 App 暂停」
 eng.write_json(eng.STATE, st)
-rollout("README 中英文对照", "docs", NOW - 20 * H,
+rollout(X("README 中英文对照", "Bilingual README"), "docs", NOW - 20 * H,
         [(700, "task_started", {"turn_id": "t1"}), (0, "task_complete", {})], cfg=("gpt-6-luna", "low", "priority"))
 with open(os.path.join(codex, "session_index.jsonl"), "w", encoding="utf-8") as f:
     f.writelines(json.dumps(t, ensure_ascii=False) + "\n" for t in titles)

@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%lld 个子任务</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld subagent</string>
+			<key>other</key>
+			<string>%lld subagents</string>
+		</dict>
+	</dict>
+	<key>%lld 个对话</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld conversation</string>
+			<key>other</key>
+			<string>%lld conversations</string>
+		</dict>
+	</dict>
+	<key>%lld 个对话的设置已提交，下一轮起生效</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Settings for %lld conversation submitted; they take effect next turn</string>
+			<key>other</key>
+			<string>Settings for %lld conversations submitted; they take effect next turn</string>
+		</dict>
+	</dict>
+	<key>%lld 人</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld member</string>
+			<key>other</key>
+			<string>%lld members</string>
+		</dict>
+	</dict>
+	<key>%lld 人 · 交费日默认按加入日期每月同一天，可手动改</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld member · Due date defaults to the join day each month; editable</string>
+			<key>other</key>
+			<string>%lld members · Due dates default to the join day each month; editable</string>
+		</dict>
+	</dict>
+	<key>%lld 名成员</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld member</string>
+			<key>other</key>
+			<string>%lld members</string>
+		</dict>
+	</dict>
+	<key>%lld 天前</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld day ago</string>
+			<key>other</key>
+			<string>%lld days ago</string>
+		</dict>
+	</dict>
+	<key>%lld 天后</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>in %lld day</string>
+			<key>other</key>
+			<string>in %lld days</string>
+		</dict>
+	</dict>
+	<key>%lld 条 · 每 4 秒自动刷新</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld line · refreshes every 4 s</string>
+			<key>other</key>
+			<string>%lld lines · refreshes every 4 s</string>
+		</dict>
+	</dict>
+	<key>切换，并在 %lld 个对话里续答</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Switch and Resume %lld Conversation</string>
+			<key>other</key>
+			<string>Switch and Resume %lld Conversations</string>
+		</dict>
+	</dict>
+	<key>对话正常结束（模型自己停下，不是额度用完）3 分钟后还没有新消息，就自动发续答用语；同一个对话连续自动继续 %lld 次后停下并通知你，你发一条消息就重新计数</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>When a conversation ends normally (the model stopped on its own, not a usage limit) and there's no new message for 3 minutes, sends the resume prompt. Stops and notifies you after %lld auto-continue in a row in the same conversation; sending a message resets the count</string>
+			<key>other</key>
+			<string>When a conversation ends normally (the model stopped on its own, not a usage limit) and there's no new message for 3 minutes, sends the resume prompt. Stops and notifies you after %lld auto-continues in a row in the same conversation; sending a message resets the count</string>
+		</dict>
+	</dict>
+	<key>已在后台让 %lld 个对话继续</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld conversation is continuing in the background</string>
+			<key>other</key>
+			<string>%lld conversations are continuing in the background</string>
+		</dict>
+	</dict>
+	<key>已复制 %lld 个邮箱</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Copied %lld email</string>
+			<key>other</key>
+			<string>Copied %lld emails</string>
+		</dict>
+	</dict>
+	<key>已重启 ChatGPT，稍后在 %lld 个对话里自动续答</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Restarted ChatGPT; %lld conversation will auto-resume shortly</string>
+			<key>other</key>
+			<string>Restarted ChatGPT; %lld conversations will auto-resume shortly</string>
+		</dict>
+	</dict>
+	<key>应用到 %lld 个对话</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Apply to %lld Conversation</string>
+			<key>other</key>
+			<string>Apply to %lld Conversations</string>
+		</dict>
+	</dict>
+	<key>改 %lld 个对话，下一轮起生效；没在 ChatGPT 里打开的会在后台逐个打开一下</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Changes %lld conversation from the next turn; if it isn't open in ChatGPT, it's briefly opened in the background</string>
+			<key>other</key>
+			<string>Changes %lld conversations from the next turn; ones not open in ChatGPT are briefly opened in the background one by one</string>
+		</dict>
+	</dict>
+	<key>暂停 %lld 个对话？</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Pause %lld Conversation?</string>
+			<key>other</key>
+			<string>Pause %lld Conversations?</string>
+		</dict>
+	</dict>
+	<key>正在暂停 %lld 个对话</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>Pausing %lld conversation</string>
+			<key>other</key>
+			<string>Pausing %lld conversations</string>
+		</dict>
+	</dict>
+	<key>逾期 %lld 天</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%lld day overdue</string>
+			<key>other</key>
+			<string>%lld days overdue</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

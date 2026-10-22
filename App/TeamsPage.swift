@@ -61,7 +61,7 @@ struct TeamsPage: View {
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
             Table(rows, selection: $selection, sortOrder: $order) {
-                TableColumn("团队", value: \.name) { r in
+                TableColumn(L("团队#列", zh: "团队"), value: \.name) { r in
                     HStack(spacing: 9) {
                         Image(systemName: "building.2.fill")
                             .font(.system(size: 11)).foregroundStyle(.white)
@@ -70,7 +70,7 @@ struct TeamsPage: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(r.name).fontWeight(.medium).lineLimit(1)
                             Text(r.w.slots.isEmpty ? (r.w.planName.isEmpty ? "Business" : r.w.planName)
-                                 : "槽 " + r.w.slots.joined(separator: "、"))
+                                 : L("槽 \(r.w.slots.joined(separator: L("、")))"))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -85,30 +85,30 @@ struct TeamsPage: View {
                 .width(min: 50, ideal: 60)
                 TableColumn("成员", value: \.members) { r in
                     HStack(spacing: 5) {
-                        Text(r.members >= 0 ? "\(r.members) 人" : "—").monospacedDigit()
-                        if r.newCount > 0 { Pill(text: "新 \(r.newCount)", color: Palette.green) }
+                        Text(r.members < 0 ? "—" : AppLanguage.active == "en" ? "\(r.members)" : L("\(r.members) 人")).monospacedDigit()
+                        if r.newCount > 0 { Pill(text: L("新 \(r.newCount)"), color: Palette.green) }
                     }
                 }
                 .width(min: 80, ideal: 96)
                 TableColumn("待交费", value: \.due) { r in
-                    if r.due > 0 { Pill(text: "\(r.due) 人 3 天内", color: Palette.orange) } else { Text("—").foregroundStyle(.tertiary) }
+                    if r.due > 0 { Pill(text: L("\(r.due) 人 3 天内"), color: Palette.orange) } else { Text("—").foregroundStyle(.tertiary) }
                 }
                 .width(min: 70, ideal: 90)
                 TableColumn("续费 / 到期", value: \.renew) { r in RenewCell(ws: r.w, now: store.now) }
-                    .width(min: 96, ideal: 116)
+                    .width(min: 96, ideal: AppLanguage.active == "en" ? 130 : 116)   // 英文表头「Renews / Expires」更宽
                 TableColumn("状态", value: \.statusRank) { r in
                     if r.w.deactivated {
                         HStack(spacing: 8) {
-                            StatusChip(text: "已停用", color: Palette.red)
+                            StatusChip(text: L("已停用"), color: Palette.red)
                             Button("移除") { hideAsk = r.w }.glassButton().controlSize(.small)
                                 .help("从团队列表里拿掉（只改本机显示，不动 ChatGPT 那边）")
                         }
                     }
-                    else if r.w.sub.delinquent { StatusChip(text: "欠费", color: Palette.red) }
-                    else if r.w.sub.active { StatusChip(text: "正常", color: Palette.green) }
-                    else { StatusChip(text: "未订阅", color: Palette.gray) }
+                    else if r.w.sub.delinquent { StatusChip(text: L("欠费"), color: Palette.red) }
+                    else if r.w.sub.active { StatusChip(text: L("正常"), color: Palette.green) }
+                    else { StatusChip(text: L("未订阅"), color: Palette.gray) }
                 }
-                .width(min: 120, ideal: 130)
+                .width(min: 120, ideal: AppLanguage.active == "en" ? 165 : 130)   // 英文「Deactivated」+「Remove」更宽
             }
             .alternatingRowBackgrounds(.disabled)   // 不要斑马纹：和概览、设置一样透出页面底色
             .scrollContentBackground(.hidden)
@@ -131,9 +131,9 @@ struct TeamsPage: View {
         }
         .animation(.snappy(duration: 0.28), value: selection)
         .navigationTitle("团队")
-        .navigationSubtitle("\(store.teams.count) 个团队 · \(store.teams.reduce(0) { $0 + $1.activeMembers.count }) 名成员 · "
-                            + (store.syncing ? "正在同步…" : store.directory.at > 0 ? "同步于 \(TimeText.ago(store.directory.at, now: store.now))" : "还没同步过"))
-        .pageToolbar(search: $query, prompt: "搜索团队 / 邮箱 / 微信名") {
+        .navigationSubtitle(L("\(store.teams.count) 个团队 · \(store.teams.reduce(0) { $0 + $1.activeMembers.count }) 名成员 · ")
+                            + (store.syncing ? L("正在同步…") : store.directory.at > 0 ? L("同步于 \(TimeText.ago(store.directory.at, now: store.now))") : L("还没同步过")))
+        .pageToolbar(search: $query, prompt: L("搜索团队 / 邮箱 / 微信名")) {
             Button { store.loadDirectory(refresh: true) } label: { Label("同步", systemImage: "arrow.triangle.2.circlepath") }
                 .disabled(store.syncing).help("联网同步团队、订阅和成员")
         }
@@ -158,25 +158,27 @@ struct SpaceInspector: View {
                     Text("所有者 \(w.ownerEmail)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
 
-                PanelGroup(title: "订阅") {
+                PanelGroup(title: L("订阅")) {
                     if sub.nextDate > 0 {
-                        InfoRow("下次\(sub.nextLabel)", "\(TimeText.date(sub.nextDate))（\(TimeText.daysLeft(sub.nextDate, now: store.now)) 天后）")
+                        // 和 sub.nextLabel（未订阅 / 续费 / 到期）同样的分支，拼成整句查表
+                        InfoRow(!sub.active ? L("下次未订阅") : sub.willRenew && sub.cancelsAt == 0 ? L("下次续费") : L("下次到期"),
+                                L("\(TimeText.date(sub.nextDate))（\(TimeText.daysLeft(sub.nextDate, now: store.now)) 天后）"))
                     } else {
-                        InfoRow("状态", w.deactivated ? "已停用" : "未订阅")
+                        InfoRow(L("状态"), w.deactivated ? L("已停用") : L("未订阅"))
                     }
-                    if sub.active { InfoRow("自动续费", sub.cancelsAt > 0 || !sub.willRenew ? "已关闭" : "开启") }
-                    if !sub.billing.isEmpty { InfoRow("计费", [sub.billingText, sub.currency, sub.platformText].filter { !$0.isEmpty }.joined(separator: " · ")) }
-                    if sub.seatsTotal > 0 { InfoRow("席位", "已用 \(sub.seatsUsed) / 共 \(sub.seatsTotal)") }
-                    if !sub.discount.isEmpty { InfoRow("优惠", sub.discount) }
-                    if sub.activeStart > 0 { InfoRow("开通于", TimeText.date(sub.activeStart)) }
-                    if !w.slots.isEmpty { InfoRow("槽位", w.slots.joined(separator: "、")) }
-                    if !w.errors.isEmpty { InfoRow("同步问题", w.errors.joined(separator: "；")) }
+                    if sub.active { InfoRow(L("自动续费"), sub.cancelsAt > 0 || !sub.willRenew ? L("已关闭") : L("开启")) }
+                    if !sub.billing.isEmpty { InfoRow(L("计费"), [sub.billingText, sub.currency, sub.platformText].filter { !$0.isEmpty }.joined(separator: " · ")) }
+                    if sub.seatsTotal > 0 { InfoRow(L("席位"), L("已用 \(sub.seatsUsed) / 共 \(sub.seatsTotal)")) }
+                    if !sub.discount.isEmpty { InfoRow(L("优惠"), PhraseBook.shared.apply(sub.discount)) }
+                    if sub.activeStart > 0 { InfoRow(L("开通于"), TimeText.date(sub.activeStart)) }
+                    if !w.slots.isEmpty { InfoRow(L("槽位#多个", zh: "槽位"), w.slots.joined(separator: L("、"))) }
+                    if !w.errors.isEmpty { InfoRow(L("同步问题"), w.errors.map { PhraseBook.shared.apply($0) }.joined(separator: L("；"))) }
                 }
 
                 if let members = w.members {
                     let active = members.filter(\.active).sorted { ($0.isOwner ? 0 : 1, -$0.joined) < ($1.isOwner ? 0 : 1, -$1.joined) }
                     let left = members.filter { !$0.active }
-                    PanelGroup(title: "成员 \(active.count)", trailing: {
+                    PanelGroup(title: L("成员 \(active.count)"), trailing: {
                         Button("导出") { export(members) }.glassButton().controlSize(.small)
                     }) {
                         ForEach(active) { m in
@@ -196,7 +198,7 @@ struct SpaceInspector: View {
                 }
 
                 if !w.invites.isEmpty {
-                    PanelGroup(title: "待接受邀请 \(w.invites.count)") {
+                    PanelGroup(title: L("待接受邀请 \(w.invites.count)")) {
                         ForEach(w.invites) { i in
                             HStack {
                                 Image(systemName: "envelope").foregroundStyle(.secondary)
@@ -215,9 +217,10 @@ struct SpaceInspector: View {
 
     private func export(_ members: [Member]) {
         let rows = members.map { [$0.email, store.wechat($0.email), Workspace.roleText($0.role), TimeText.date($0.joined),
-                                  TimeText.date($0.nextPay ?? 0), $0.active ? "在职" : "已停用 " + TimeText.date($0.deactivatedAt)] }
-        if let url = exportCSV(name: "\(w.displayName)-成员.csv", header: ["邮箱", "微信名", "角色", "加入时间", "下次交费", "状态"], rows: rows) {
-            store.say("已导出到 \(url.lastPathComponent)")
+                                  TimeText.date($0.nextPay ?? 0), $0.active ? L("在职") : L("已停用 \(TimeText.date($0.deactivatedAt))")] }
+        if let url = exportCSV(name: L("\(w.displayName)-成员.csv"),
+                               header: [L("邮箱"), L("微信名"), L("角色"), L("加入时间"), L("下次交费"), L("状态")], rows: rows) {
+            store.say(L("已导出到 \(url.lastPathComponent)"))
         }
     }
 }
@@ -262,18 +265,18 @@ struct MemberLine: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(m.email).lineLimit(1).truncationMode(.middle).strikethrough(!m.active)
-                    if isNew { Pill(text: "新", color: Palette.green) }
-                    if m.isOwner { Pill(text: "所有者", color: Palette.accent) }
+                    if isNew { Pill(text: L("新"), color: Palette.green) }
+                    if m.isOwner { Pill(text: L("所有者"), color: Palette.accent) }
                 }
-                Text([wechat.isEmpty ? "" : "微信 \(wechat)",
-                      m.local == true ? "本机已登录" + (m.viaSlot.map { $0.isEmpty ? "" : "（槽 \($0)）" } ?? "") + " · 加入时间待同步"
-                                      : "\(TimeText.date(m.joined).dropFirst(2)) 加入"]
+                Text([wechat.isEmpty ? "" : L("微信 \(wechat)"),
+                      m.local == true ? L("本机已登录") + (m.viaSlot.map { $0.isEmpty ? "" : L("（槽 \($0)）") } ?? "") + L(" · 加入时间待同步")
+                                      : L("\(String(TimeText.date(m.joined).dropFirst(2))) 加入")]
                         .filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
             if m.active, let p = m.nextPay { PayText(epoch: p, now: now, manual: m.payManual == true, compact: true) }
-            else if !m.active { Text("停用于 " + TimeText.date(m.deactivatedAt).dropFirst(5)).font(.caption).foregroundStyle(.secondary) }
+            else if !m.active { Text(L("停用于 \(String(TimeText.date(m.deactivatedAt).dropFirst(5)))")).font(.caption).foregroundStyle(.secondary) }
         }
         .font(.callout)
         .contextMenu { Button("复制邮箱") { copyToPasteboard(m.email) } }
@@ -298,7 +301,7 @@ struct PayText: View {
     var body: some View {
         let d = PayText.daysAway(epoch, now: now)
         let color: Color = prominence == .increased ? .white : (d <= 0 ? Palette.red : d <= 3 ? Palette.orange : Palette.text)
-        let when = d < 0 ? "逾期 \(-d) 天" : d == 0 ? "今天" : d == 1 ? "明天" : "\(d) 天后"
+        let when = d < 0 ? L("逾期 \(-d) 天") : d == 0 ? L("今天") : d == 1 ? L("明天") : L("\(d) 天后")
         let sub: Color = prominence == .increased ? .white.opacity(0.8) : (d <= 3 ? color : .secondary)
         Group {
             if dateOnly {
@@ -320,8 +323,8 @@ struct PayText: View {
             }
         }
         .foregroundStyle(color)
-        .help((d < 0 ? "过了应交日还没标记已交；标记后顺延到下个月。" : "")
-              + (manual ? "手动设置的交费日，之后每月同一天" : "按加入日期每月同一天推算"))
+        .help((d < 0 ? L("过了应交日还没标记已交；标记后顺延到下个月。") : "")
+              + (manual ? L("手动设置的交费日，之后每月同一天") : L("按加入日期每月同一天推算")))
     }
 }
 
@@ -385,19 +388,19 @@ struct MembersPage: View {
                 TableColumn("成员邮箱", value: \.email) { r in
                     HStack(spacing: 5) {
                         Text(r.email).lineLimit(1)
-                        if r.m.active && store.now - r.joined <= 3 * 86400 && !r.m.isOwner { Pill(text: "新", color: Palette.green) }
-                        if r.m.isOwner { Pill(text: "所有者", color: Palette.accent) }
+                        if r.m.active && store.now - r.joined <= 3 * 86400 && !r.m.isOwner { Pill(text: L("新"), color: Palette.green) }
+                        if r.m.isOwner { Pill(text: L("所有者"), color: Palette.accent) }
                     }
                     .padding(.vertical, 10)        // 行高和账号页差不多，不挤
                 }
                 .width(min: 170, ideal: 220)
                 TableColumn("微信名", value: \.wechat) { r in
-                    Text(r.wechat.isEmpty ? "未填" : r.wechat).foregroundStyle(r.wechat.isEmpty ? .tertiary : .primary)
+                    Text(r.wechat.isEmpty ? L("未填") : r.wechat).foregroundStyle(r.wechat.isEmpty ? .tertiary : .primary)
                 }
                 .width(min: 80, ideal: 110)
                 TableColumn("所有者邮箱", value: \.owner) { r in Text(r.owner).lineLimit(1).foregroundStyle(.secondary) }
                     .width(min: 140, ideal: 180)
-                TableColumn("团队", value: \.team) { r in Text(r.team).lineLimit(1) }
+                TableColumn(L("团队#列", zh: "团队"), value: \.team) { r in Text(r.team).lineLimit(1) }
                     .width(min: 80, ideal: 120)
                 TableColumn("加入时间", value: \.joined) { r in Text(TimeText.date(r.joined)).monospacedDigit() }
                     .width(min: 86, ideal: 96)
@@ -409,10 +412,10 @@ struct MembersPage: View {
                 TableColumn("交费") { r in PaidCell(store: store, r: r) }
                     .width(min: 96, ideal: 110)
                 TableColumn("状态", value: \.state) { r in
-                    r.m.active ? StatusChip(text: "在职", color: Palette.green)
-                               : StatusChip(text: "停用 " + TimeText.date(r.m.deactivatedAt).dropFirst(5), color: Palette.gray)
+                    r.m.active ? StatusChip(text: L("在职"), color: Palette.green)
+                               : StatusChip(text: L("停用 \(String(TimeText.date(r.m.deactivatedAt).dropFirst(5)))"), color: Palette.gray)
                 }
-                .width(min: 60, ideal: 84)
+                .width(min: 60, ideal: AppLanguage.active == "en" ? 120 : 84)   // 英文「Deactivated 10-03」更宽
             }
             .alternatingRowBackgrounds(.disabled)   // 不要斑马纹：和概览、设置一样透出页面底色
             .scrollContentBackground(.hidden)
@@ -434,16 +437,17 @@ struct MembersPage: View {
         }
         .navigationTitle("成员")
         .navigationSubtitle("\(shown.count) 人 · 交费日默认按加入日期每月同一天，可手动改")
-        .pageToolbar(search: $query, prompt: "搜索邮箱 / 微信名 / 团队") {
+        .pageToolbar(search: $query, prompt: L("搜索邮箱 / 微信名 / 团队")) {
             Button {
                 copyToPasteboard(shown.map(\.email).joined(separator: "\n"))
-                store.say("已复制 \(shown.count) 个邮箱")
+                store.say(L("已复制 \(shown.count) 个邮箱"))
             } label: { Label("复制邮箱", systemImage: "doc.on.doc") }
             Button {
                 let data = shown.map { [$0.email, $0.wechat, $0.owner, $0.team, TimeText.date($0.joined),
-                                        TimeText.date($0.m.nextPay ?? 0), $0.m.active ? "在职" : "已停用"] }
-                if let url = exportCSV(name: "成员台账.csv", header: ["成员邮箱", "微信名", "所有者邮箱", "团队", "加入时间", "下次交费", "状态"], rows: data) {
-                    store.say("已导出到 \(url.lastPathComponent)")
+                                        TimeText.date($0.m.nextPay ?? 0), $0.m.active ? L("在职") : L("已停用")] }
+                if let url = exportCSV(name: L("成员台账.csv"),
+                                       header: [L("成员邮箱"), L("微信名"), L("所有者邮箱"), L("团队#列", zh: "团队"), L("加入时间"), L("下次交费"), L("状态")], rows: data) {
+                    store.say(L("已导出到 \(url.lastPathComponent)"))
                 }
             } label: { Label("导出 CSV", systemImage: "square.and.arrow.up") }
             Button { store.loadDirectory(refresh: true) } label: { Label("同步", systemImage: "arrow.triangle.2.circlepath") }
@@ -573,6 +577,6 @@ struct MemberEditSheet: View {
         if w != store.wechat(row.email) { store.setWechat(row.email, w) }
         if touched { store.setPay(row.w.id, row.email, manual ? date : nil) }
         store.editingMember = nil
-        store.say("已保存 \(row.email)")
+        store.say(L("已保存 \(row.email)"))
     }
 }

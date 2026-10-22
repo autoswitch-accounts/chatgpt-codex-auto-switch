@@ -38,6 +38,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("engine", os.path.join(HERE, "engine.py"))
 eng = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eng)
+t = eng.t                  # 给人看的话按界面语言取（英文表见下面「英文译文」一节）
 
 CODEX_HOME = os.path.expanduser("~/.codex")
 SESSIONS   = os.path.join(CODEX_HOME, "sessions")
@@ -85,13 +86,13 @@ def notify(text, level="info", kind="switch"):
     try:
         eng.push_event(kind, text, level=level)
     except Exception as e:
-        log(f"写消息中心失败：{type(e).__name__}: {e}")
+        log(t("写消息中心失败：{err}", err=f"{type(e).__name__}: {e}"))
 
 
 def hm(epoch):
     """时间戳 → 「10-21 18:52」，今天的只显示「18:52」"""
     if not epoch:
-        return "未知"
+        return t("未知")
     d = datetime.datetime.fromtimestamp(epoch)
     return d.strftime("%H:%M") if d.date() == datetime.date.today() else d.strftime("%m-%d %H:%M")
 
@@ -300,7 +301,7 @@ class Tracker:
                         snapshots.append(snap)
                         if snap["reached"]:
                             triggers.append({"path": path, "ts": ts, "kind": "rate",
-                                             "why": "额度已用满"})
+                                             "why": t("额度已用满")})
                 elif error_info(p) == "usage_limit_exceeded":
                     triggers.append({"path": path, "ts": ts, "kind": "error",
                                      "why": error_msg(p) or "usage_limit_exceeded"})
@@ -554,7 +555,7 @@ class Bus:
         r = self._wait(rid, 8)
         self.me = ((r or {}).get("result") or {}).get("clientId")
         if not self.me:
-            raise ConnectionError("总线握手没拿到 clientId")
+            raise ConnectionError(t("总线握手没拿到 clientId"))
         return self
 
     def __exit__(self, *exc):
@@ -577,7 +578,7 @@ class Bus:
             except socket.timeout:
                 continue
             if not chunk:
-                raise ConnectionError("总线连接被关闭")
+                raise ConnectionError(t("总线连接被关闭"))
             self.buf += chunk
             while len(self.buf) >= 4:
                 (n,) = struct.unpack("<I", self.buf[:4])
@@ -617,7 +618,7 @@ class Bus:
         }, 20)
         if r and r.get("resultType") == "success":
             return True, ""
-        return False, (r or {}).get("error") or "App 未在 20 秒内响应"
+        return False, (r or {}).get("error") or t("App 未在 20 秒内响应")
 
     def update_settings(self, tid, settings):
         """改对话下一轮起用的模型 / 推理强度 / 速度（App 里窗口接管了这个对话才行；协议版本 2）
@@ -626,7 +627,7 @@ class Bus:
             "conversationId": tid, "threadSettings": settings, "activeTurnId": None, "condition": None}, 15)
         if r and r.get("resultType") == "success" and (r.get("result") or {}).get("applied"):
             return True, ""
-        return False, (r or {}).get("error") or "没有生效"
+        return False, (r or {}).get("error") or t("没有生效")
 
     def interrupt(self, tid, turn_id):
         """停下对话正在跑的这一轮，等同 ChatGPT 里点停止（mode user-stop）。
@@ -637,7 +638,7 @@ class Bus:
         r = self.request("thread-follower-interrupt-turn", 4 if turn_id else 3, params, 15)
         if r and r.get("resultType") == "success":
             return True, ""
-        return False, (r or {}).get("error") or "App 未在 15 秒内响应"
+        return False, (r or {}).get("error") or t("App 未在 15 秒内响应")
 
     def steer(self, tid, text):
         r = self.request("thread-follower-steer-turn", 1, {
@@ -646,7 +647,7 @@ class Bus:
         }, 20)
         if r and r.get("resultType") == "success":
             return True, ""
-        return False, (r or {}).get("error") or "App 未在 20 秒内响应"
+        return False, (r or {}).get("error") or t("App 未在 20 秒内响应")
 
 
 class AppServer:
@@ -662,7 +663,7 @@ class AppServer:
         r = self.call("initialize", {"clientInfo": {"name": "autoswitch-daemon", "title": None, "version": "0"},
                                      "capabilities": {"experimentalApi": True}}, 20)
         if not r or "result" not in r:
-            raise ConnectionError("app-server 没有完成握手")
+            raise ConnectionError(t("app-server 没有完成握手"))
         self.p.stdin.write(json.dumps({"method": "initialized"}) + "\n")
         self.p.stdin.flush()
         return self
@@ -712,7 +713,7 @@ def queue_continue(tids, text):
                 r = s.call("thread/queue/add", {"threadId": tid, "clientUserMessageId": str(uuid.uuid4()),
                                                 "input": [{"type": "text", "text": text, "text_elements": []}]})
                 qid = (((r or {}).get("result") or {}).get("queuedSubmission") or {}).get("id")
-                res[tid] = (qid, "") if qid else ("", ((r or {}).get("error") or {}).get("message") or "app-server 没有响应")
+                res[tid] = (qid, "") if qid else ("", ((r or {}).get("error") or {}).get("message") or t("app-server 没有响应"))
     except Exception as e:
         return {t: res.get(t) or ("", f"{type(e).__name__}: {e}") for t in tids}
     for tid, (qid, _) in res.items():
@@ -769,20 +770,20 @@ class Daemon:
         try:
             eng.write_json(eng.STATE, self.st)
         except OSError as e:
-            log(f"保存状态失败：{e}")
+            log(t("保存状态失败：{err}", err=e))
 
     def status_text(self, cfg):
         if not cfg["enabled"] and not self.st["queue"]:
-            return "off", "自动切号已关闭"
+            return "off", t("自动切号已关闭")
         if self.st.get("switching"):
-            return "switching", f"正在切到 {self.st['switching']['to']}，等待 ChatGPT 启动"
+            return "switching", t("正在切到 {to}，等待 ChatGPT 启动", to=self.st['switching']['to'])
         if self.st.get("drain"):
-            return "switching", "额度用完，等其他对话停下后切号"
+            return "switching", t("额度用完，等其他对话停下后切号")
         if self.st.get("wait"):
-            return "waiting", f"全部账号额度用完，{hm(self.st['wait']['until'])} 自动继续"
+            return "waiting", t("全部账号额度用完，{at} 自动继续", at=hm(self.st['wait']['until']))
         if self.st["queue"]:
-            return "resuming", f"正在续答 {len(self.st['queue'])} 个对话"
-        return "idle", "监控中"
+            return "resuming", t("正在续答 {n} 个对话", n=len(self.st['queue']))
+        return "idle", t("监控中")
 
     # ----- 额度 -----
     def refresh_usage(self, now):
@@ -821,13 +822,13 @@ class Daemon:
         except Exception as e:
             ok, err = False, f"{type(e).__name__}: {e}"
         try:
-            mail = (eng.info(eng.slot_path(slot)) or {}).get("email") or f"槽 {slot}"
+            mail = (eng.info(eng.slot_path(slot)) or {}).get("email") or t("槽 {slot}", slot=slot)
             if ok:
-                log(f"自动开始计时：{mail} 的 5 小时额度已开始计时")
+                log(t("自动开始计时：{mail} 的 5 小时额度已开始计时", mail=mail))
             else:
                 self.start_fail[slot] = time.time() + START_RETRY
-                log(f"自动开始计时失败：{mail}：{err}，{START_RETRY // 60} 分钟后再试")
-                notify(f"{mail} 自动开始计时失败：{err}", "warn", "quota")
+                log(t("自动开始计时失败：{mail}：{err}，{n} 分钟后再试", mail=mail, err=err, n=START_RETRY // 60))
+                notify(t("{mail} 自动开始计时失败：{err}", mail=mail, err=err), "warn", "quota")
         finally:
             self.last_start = time.time()
             self.starting = False
@@ -836,7 +837,7 @@ class Daemon:
         try:
             eng.sync_directory()
         except Exception as e:
-            log(f"同步账号目录失败：{type(e).__name__}: {e}")
+            log(t("同步账号目录失败：{err}", err=f"{type(e).__name__}: {e}"))
 
     def usable_now(self, slot, now):
         """联网确认某槽现在可用；查询失败时按缓存判断。返回 (可用?, 恢复时刻或 None)"""
@@ -891,7 +892,7 @@ class Daemon:
         if not triggers or self.st.get("switching"):
             return
         if not self.cur:
-            log("检测到撞限，但当前凭证不属于任何槽位，无法自动切")
+            log(t("检测到撞限，但当前凭证不属于任何槽位，无法自动切"))
             return
         threads = {main_thread(t["path"]) for t in triggers} - {None}
         if self.st.get("wait") or self.st.get("drain"):
@@ -902,27 +903,27 @@ class Daemon:
             return                             # 刚联网确认过仍可用，别每轮都去查
         why = (errs or triggers)[0]["why"]
         e = eng.fetch_usage(self.cur)
-        t = eng.available_at(e, now)
-        if t == 0 and not e.get("error"):
+        back = eng.available_at(e, now)
+        if back == 0 and not e.get("error"):
             if not errs:
-                log(f"槽 {self.cur} 出现额度用满信号，但联网确认仍可用，忽略")
+                log(t("槽 {slot} 出现额度用满信号，但联网确认仍可用，忽略", slot=self.cur))
                 self.ignore_rate_until = now + 60
                 return
             # 轮次因限额失败、服务端却说可用（如 team 空间 credits 用完）：先挡半小时
             eng.merge_quota(self.cur, {"block_until": now + 1800, "block_reason": why[:80]})
-        elif t is None or e.get("error"):
+        elif back is None or e.get("error"):
             eng.merge_quota(self.cur, {"block_until": now + 1800,
-                                       "block_reason": f"撞限，额度查询失败（{e.get('error')}）"})
-        log(f"槽 {self.cur} 额度用完（{why}）")
+                                       "block_reason": t("撞限，额度查询失败（{err}）", err=e.get('error'))})
+        log(t("槽 {slot} 额度用完（{why}）", slot=self.cur, why=why))
         last = main_thread(triggers[-1]["path"])
         self.enqueue(threads, now, last=last)
         busy = self.tracker.active_threads() - threads
         if busy:
             # 同账号上还有对话在跑：等它们自己撞限停下再切，免得退出 ChatGPT 时被打断（见 DRAIN_MAX）
             self.st["drain"] = {"since": now, "slot": self.cur}
-            log(f"还有 {len(busy)} 个对话在跑，等它们都自己停下再切号（最多等 {DRAIN_MAX // 60} 分钟）")
+            log(t("还有 {n} 个对话在跑，等它们都自己停下再切号（最多等 {m} 分钟）", n=len(busy), m=DRAIN_MAX // 60))
             return
-        self.rotate(now, f"槽 {self.cur} 额度用完")
+        self.rotate(now, t("槽 {slot} 额度用完", slot=self.cur))
 
     def check_drain(self, now):
         """撞限后在等别的对话停下：都停了（做完、撞限、或 15 分钟没动静）就切号；等够 DRAIN_MAX 还在跑的
@@ -938,17 +939,17 @@ class Daemon:
             return
         self.st["drain"] = None
         if busy:
-            log(f"等了 {DRAIN_MAX // 60} 分钟还有 {len(busy)} 个对话在跑，照常切号（它们会被打断，切号后打开对话续答）")
+            log(t("等了 {m} 分钟还有 {n} 个对话在跑，照常切号（它们会被打断，切号后打开对话续答）", m=DRAIN_MAX // 60, n=len(busy)))
             self.enqueue(busy, now)
         else:
-            log("同账号上的对话都已停下，切号")
-        self.rotate(now, f"槽 {self.cur} 额度用完")
+            log(t("同账号上的对话都已停下，切号"))
+        self.rotate(now, t("槽 {slot} 额度用完", slot=self.cur))
 
     def rotate(self, now, reason):
         # 兜底：上次切号以来因限额停下的对话都进续答队列（撞限信号偶尔漏掉、或被 enqueue 去重吞掉）
         missed = self.limited_since(self.st["last_switch_at"], now) - {q["thread"] for q in self.st["queue"]}
         if missed:
-            log(f"切号前补查到 {len(missed)} 个因额度用完停下、还没排上的对话，一并续答")
+            log(t("切号前补查到 {n} 个因额度用完停下、还没排上的对话，一并续答", n=len(missed)))
             self.enqueue(missed, now)
         nxt, earliest = self.pick(now, include_current=False)
         if nxt:
@@ -956,19 +957,19 @@ class Daemon:
             return
         until = (earliest or now + 600) + RESET_BUFFER
         self.st["wait"] = {"until": until, "since": now}
-        log(f"{reason}，其他账号也都不可用，等到 {hm(until)} 再试")
-        notify(f"所有账号额度都用完了，{hm(until)} 自动继续", "warn")
+        log(t("{reason}，其他账号也都不可用，等到 {at} 再试", reason=reason, at=hm(until)))
+        notify(t("所有账号额度都用完了，{at} 自动继续", at=hm(until)), "warn")
 
     def switch_to(self, slot, now, reason):
-        log(f"{reason} → 切到槽 {slot}")
+        log(t("{reason} → 切到槽 {slot}", reason=reason, slot=slot))
         self.st["wait"] = None
         quiet = eng.load_config()["quiet_switch"]
         front = eng.frontmost() if quiet else ""     # 切号前用户在用的 App，ChatGPT 起来后把焦点还给它
         ok, r = eng.switch(slot, background=quiet)
         if not ok:
-            log(f"切号失败：{r.get('err')}")
-            notify(f"自动切号失败：{r.get('err')}", "critical")
-            eng.merge_quota(slot, {"block_until": now + 600, "block_reason": "切号失败"})
+            log(t("切号失败：{err}", err=r.get('err')))
+            notify(t("自动切号失败：{err}", err=r.get('err')), "critical")
+            eng.merge_quota(slot, {"block_until": now + 600, "block_reason": t("切号失败")})
             return
         self.cur = slot
         self.st["last_switch_at"] = time.time()
@@ -977,12 +978,12 @@ class Daemon:
             # ChatGPT 启动、建窗口的这段时间里它随时可能抢前台，单开一个线程盯着，抢了就把焦点还回去
             def guard():
                 if eng.give_back(front, 45):
-                    log("ChatGPT 启动时跳到了最前面，已把焦点还给原来的窗口")
+                    log(t("ChatGPT 启动时跳到了最前面，已把焦点还给原来的窗口"))
             threading.Thread(target=guard, daemon=True).start()
         self.last_cur_usage = 0
         self.tracker.forget_turns()          # 旧 App 里的轮次已随重启结束
-        log(f"已切到槽 {slot}（{r.get('email')}），等待 ChatGPT 就绪")
-        notify(f"已切到 {r.get('email')}，稍后在原对话里继续")
+        log(t("已切到槽 {slot}（{email}），等待 ChatGPT 就绪", slot=slot, email=r.get('email')))
+        notify(t("已切到 {email}，稍后在原对话里继续", email=r.get('email')))
 
     def check_wait(self, now):
         w = self.st.get("wait")
@@ -993,20 +994,20 @@ class Daemon:
         if self.cur and eng.available_at(e, now) == 0 and \
                 (e or {}).get("at", 0) > w["since"]:
             self.st["wait"] = None
-            log(f"当前槽 {self.cur} 已可用，结束等待")
+            log(t("当前槽 {slot} 已可用，结束等待", slot=self.cur))
             return
         if now < w["until"]:
             return
         nxt, earliest = self.pick(now, include_current=True)
         if nxt == self.cur:
             self.st["wait"] = None
-            log(f"槽 {self.cur} 额度已恢复，无需切号，直接续答")
-            notify(f"额度已恢复，继续工作")
+            log(t("槽 {slot} 额度已恢复，无需切号，直接续答", slot=self.cur))
+            notify(t("额度已恢复，继续工作"))
         elif nxt:
-            self.switch_to(nxt, now, "等待到点")
+            self.switch_to(nxt, now, t("等待到点"))
         else:
             w["until"] = (earliest or now + 600) + RESET_BUFFER
-            log(f"到点后仍没有可用账号，继续等到 {hm(w['until'])}")
+            log(t("到点后仍没有可用账号，继续等到 {at}", at=hm(w['until'])))
 
     # ----- 续答 -----
     def enqueue(self, threads, now, last=None, manual=False, auto=False):
@@ -1017,12 +1018,12 @@ class Daemon:
             if manual:
                 self.unpause(tid)
             elif self.is_paused(tid):
-                log(f"对话 {tid[:8]}… 是在会话页暂停的，不自动续答")
+                log(t("对话 {id}… 是在会话页暂停的，不自动续答", id=tid[:8]))
                 continue
             if tid not in known:
                 self.st["queue"].append({"thread": tid, "since": now, "added": now, "base": last_start(tid),
                                          "linked": 0, "manual": manual, "auto": auto})
-                log(f"对话 {tid[:8]}… 加入续答队列")
+                log(t("对话 {id}… 加入续答队列", id=tid[:8]))
 
     def is_paused(self, tid):
         """在会话页点过「暂停」、之后还没开过新一轮"""
@@ -1037,19 +1038,19 @@ class Daemon:
         sw = self.st.get("switching")
         if not eng.running():
             if sw and now - sw["at"] > APP_READY_MAX:
-                log("切号后 ChatGPT 迟迟没有启动，放弃等待")
+                log(t("切号后 ChatGPT 迟迟没有启动，放弃等待"))
                 self.st["switching"] = None
             return False
         if not bus_ready():
             if sw and now - sw["at"] > APP_READY_MAX:
-                log("切号后 ChatGPT 的内部总线迟迟不可用，放弃等待")
+                log(t("切号后 ChatGPT 的内部总线迟迟不可用，放弃等待"))
                 self.st["switching"] = None
             return False
         if sw:
             if now - sw.get("bus_at", now) < 5:
                 sw.setdefault("bus_at", now)   # 总线刚通，窗口可能还没建好，缓几秒
                 return False
-            log(f"ChatGPT 已就绪（切号后 {now - sw['at']:.0f} 秒）")
+            log(t("ChatGPT 已就绪（切号后 {sec:.0f} 秒）", sec=now - sw['at']))
             self.st["switching"] = None
         return True
 
@@ -1084,26 +1085,26 @@ class Daemon:
             item.setdefault("started", now)
             done = self.resumed_by_someone(item)
             if done is None:
-                log(f"续答跳过：找不到对话 {tid[:8]}… 的记录文件")
+                log(t("续答跳过：找不到对话 {id}… 的记录文件", id=tid[:8]))
                 q.remove(item)
             elif done:
                 q.remove(item)
                 # 新轮次不一定是我们排的那条跑起来的（比如在 ChatGPT 里点了继续）：撤掉，免得残留在队列里
                 if item.get("qid") and queue_drop(tid, item["qid"]):
-                    log(f"对话 {tid[:8]}… 已在别处继续，撤掉了排队的「{cfg['prompt']}」")
+                    log(t("对话 {id}… 已在别处继续，撤掉了排队的「{prompt}」", id=tid[:8], prompt=cfg['prompt']))
                 elif item.get("qid"):
-                    log(f"续答成功：对话 {tid[:8]}… 已在后台跑起排队的「{cfg['prompt']}」")
+                    log(t("续答成功：对话 {id}… 已在后台跑起排队的「{prompt}」", id=tid[:8], prompt=cfg['prompt']))
                     if not q and not item.get("auto"):
-                        notify("已在原对话里继续" if item.get("bg") else "已切号并在原对话里继续", kind="session")
+                        notify(t("已在原对话里继续") if item.get("bg") else t("已切号并在原对话里继续"), kind="session")
                 else:
-                    log(f"对话 {tid[:8]}… 已有新轮次（可能已手动继续），不再续答")
+                    log(t("对话 {id}… 已有新轮次（可能已手动继续），不再续答", id=tid[:8]))
             elif now - item["started"] > RESUME_GIVEUP:
                 q.remove(item)
                 if item.get("qid"):
                     queue_drop(tid, item["qid"])
-                log(f"续答放弃：{RESUME_GIVEUP // 60} 分钟内没能在对话 {tid[:8]}… 里继续")
-                notify("没能自动继续对话，请在原对话里手动发一句「继续」" if item.get("auto") or item.get("bg")
-                       else "切号后没能自动续答，请在原对话里手动发一句「继续」", "warn", "session")
+                log(t("续答放弃：{m} 分钟内没能在对话 {id}… 里继续", m=RESUME_GIVEUP // 60, id=tid[:8]))
+                notify(t("没能自动继续对话，请在原对话里手动发一句「继续」") if item.get("auto") or item.get("bg")
+                       else t("切号后没能自动续答，请在原对话里手动发一句「继续」"), "warn", "session")
         # 2. 后台排队：能排的一次全排进去、一起唤醒，ChatGPT 在后台跑，不弹窗口、不跳到对话。
         #    排队后迟迟没开跑（App 版本不支持、唤醒丢了……）就撤掉排队，退回下面深链 + 总线的老办法
         for i in q:
@@ -1111,19 +1112,19 @@ class Daemon:
                 # 上一轮被打断的对话，ChatGPT 会暂停它的待发队列（「由于你中断了当前响应，队列已暂停」），
                 # 排进去也不会跑，还会留在那里：直接打开对话发
                 i["no_queue"] = True
-                log(f"对话 {i['thread'][:8]}… 上一轮被打断，ChatGPT 会暂停它的待发队列，改为打开对话发送")
+                log(t("对话 {id}… 上一轮被打断，ChatGPT 会暂停它的待发队列，改为打开对话发送", id=i['thread'][:8]))
         todo = [i for i in q if self.use_queue(cfg, i)]
         fresh = [i for i in todo if not i.get("qid") and now >= i.get("retry_at", 0)]
         if fresh:
             got = queue_continue([i["thread"] for i in fresh], cfg["prompt"])
             for i in fresh:
-                qid, err = got.get(i["thread"]) or ("", "app-server 没有响应")
+                qid, err = got.get(i["thread"]) or ("", t("app-server 没有响应"))
                 if qid:
                     i.update(qid=qid, queued_at=now, woke=now)
-                    log(f"已把「{cfg['prompt']}」排进对话 {i['thread'][:8]}… 的待发队列，等 ChatGPT 在后台跑起来")
+                    log(t("已把「{prompt}」排进对话 {id}… 的待发队列，等 ChatGPT 在后台跑起来", prompt=cfg['prompt'], id=i['thread'][:8]))
                 else:
                     i["no_queue"] = True
-                    log(f"对话 {i['thread'][:8]}… 后台排队续答不可用（{err}），改用深链")
+                    log(t("对话 {id}… 后台排队续答不可用（{err}），改用深链", id=i['thread'][:8], err=err))
         for i in todo:
             if not i.get("qid") or i in fresh:
                 continue
@@ -1136,11 +1137,11 @@ class Daemon:
             if dropped:
                 i["no_queue"] = True
                 i.pop("qid", None)
-                log(f"对话 {i['thread'][:8]}… 排队 {QUEUE_WAIT} 秒还没跑起来，已撤掉，改用深链")
+                log(t("对话 {id}… 排队 {sec} 秒还没跑起来，已撤掉，改用深链", id=i['thread'][:8], sec=QUEUE_WAIT))
             elif dropped is False:
                 # 队列里已经没有它：ChatGPT 取走跑了（记录文件里没认出来新轮次，比如刚好在同一秒开跑）
                 q.remove(i)
-                log(f"续答成功：对话 {i['thread'][:8]}… 排队的「{cfg['prompt']}」已被 ChatGPT 取走运行")
+                log(t("续答成功：对话 {id}… 排队的「{prompt}」已被 ChatGPT 取走运行", id=i['thread'][:8], prompt=cfg['prompt']))
             else:
                 i["queued_at"] = now             # 没问成，再等一轮
         # 3. 深链 + 总线：一次只处理一个
@@ -1158,22 +1159,22 @@ class Daemon:
                         front = eng.frontmost() if quiet else ""
                         subprocess.run(["/usr/bin/open"] + (["-g"] if quiet else []) + [f"codex://threads/{tid}"],
                                        capture_output=True, timeout=10)
-                        log(f"App 还没打开对话 {tid[:8]}…，已{'在后台' if quiet else ''}发深链")
+                        log(t("App 还没打开对话 {id}…，已在后台发深链", id=tid[:8]) if quiet else t("App 还没打开对话 {id}…，已发深链", id=tid[:8]))
                         if quiet and eng.give_back(front, 4):   # ChatGPT 打开对话时会自己 focus 窗口
-                            log("ChatGPT 打开对话时跳到了最前面，已把焦点还给原来的窗口")
+                            log(t("ChatGPT 打开对话时跳到了最前面，已把焦点还给原来的窗口"))
                     return
                 ok, err = bus.start_turn(tid, cfg["prompt"])
         except (OSError, ConnectionError) as e:
-            log(f"续答时总线异常：{type(e).__name__}: {e}")
+            log(t("续答时总线异常：{err}", err=f"{type(e).__name__}: {e}"))
             return
         if ok:
             q.remove(item)
-            log(f"续答成功：已在对话 {tid[:8]}… 里发送「{cfg['prompt']}」")
+            log(t("续答成功：已在对话 {id}… 里发送「{prompt}」", id=tid[:8], prompt=cfg['prompt']))
             if not q and not item.get("auto"):
-                notify("已在原对话里继续" if item.get("bg") else "已切号并在原对话里继续", kind="session")
+                notify(t("已在原对话里继续") if item.get("bg") else t("已切号并在原对话里继续"), kind="session")
         else:
             item["retry_at"] = now + 10
-            log(f"续答未成功（{err}），10 秒后重试")
+            log(t("续答未成功（{err}），10 秒后重试", err=err))
 
     # ----- 回合结束后自动继续 -----
     def check_done(self, cfg, now):
@@ -1193,7 +1194,7 @@ class Daemon:
             if self.finished.get(tid, 0) <= ts:
                 self.finished.pop(tid, None)
             if cont.pop(tid, None):
-                log(f"对话 {tid[:8]}… 有你发的新消息，自动继续重新计数")
+                log(t("对话 {id}… 有你发的新消息，自动继续重新计数", id=tid[:8]))
         if not cfg["auto_continue"]:
             self.finished.clear()
             return
@@ -1208,12 +1209,12 @@ class Daemon:
             if c["n"] >= cfg["continue_max"]:
                 if not c.get("told"):
                     c["told"] = True
-                    log(f"对话 {tid[:8]}… 已连续自动继续 {c['n']} 次，到上限，停下等你")
-                    notify(f"有对话已连续自动继续 {c['n']} 次，到上限停下了，请看一下", "warn", "session")
+                    log(t("对话 {id}… 已连续自动继续 {n} 次，到上限，停下等你", id=tid[:8], n=c['n']))
+                    notify(t("有对话已连续自动继续 {n} 次，到上限停下了，请看一下", n=c['n']), "warn", "session")
                 continue
             c["n"] += 1
-            log(f"对话 {tid[:8]}… 回合正常结束 {CONTINUE_DELAY // 60} 分钟没有新消息，"
-                f"自动继续（第 {c['n']}/{cfg['continue_max']} 次）")
+            log(t("对话 {id}… 回合正常结束 {m} 分钟没有新消息，自动继续（第 {n}/{max} 次）",
+                  id=tid[:8], m=CONTINUE_DELAY // 60, n=c['n'], max=cfg['continue_max']))
             self.enqueue({tid}, ts, auto=True)
         # 计数只留三天
         self.st["continued"] = {k: v for k, v in cont.items() if now - v.get("at", 0) < 3 * 86400}
@@ -1238,8 +1239,8 @@ class Daemon:
                 continue                     # 太久没动的是 App 被杀留下的僵尸轮次
             if path not in self.stall:
                 self.stall[path] = now
-                log(f"对话 {tid[:8]}… 已 {idle / 60:.0f} 分钟没有新进展")
-                notify(f"有对话已 {idle / 60:.0f} 分钟没有新进展", "warn", "session")
+                log(t("对话 {id}… 已 {m:.0f} 分钟没有新进展", id=tid[:8], m=idle / 60))
+                notify(t("有对话已 {m:.0f} 分钟没有新进展", m=idle / 60), "warn", "session")
             key = f"{tid}:{f['turn']}"
             if now - self.stall[path] >= STALL_NUDGE and key not in self.st["nudged"]:
                 self.st["nudged"][key] = now
@@ -1248,7 +1249,8 @@ class Daemon:
                         ok, err = bus.steer(tid, cfg["prompt"])
                 except (OSError, ConnectionError) as e:
                     ok, err = False, str(e)
-                log(f"停滞干预（对话 {tid[:8]}…）：{'已送「' + cfg['prompt'] + '」' if ok else '未成功 ' + err}")
+                log(t("停滞干预（对话 {id}…）：{res}", id=tid[:8],
+                      res=t("已送「{prompt}」", prompt=cfg['prompt']) if ok else t("未成功 {err}", err=err)))
         # 记录只留一天
         self.st["nudged"] = {k: v for k, v in self.st["nudged"].items() if now - v < 86400}
 
@@ -1271,20 +1273,23 @@ class Daemon:
         missed = self.limited_since(self.st["last_switch_at"], now)
         if not missed or not self.cur:
             return
-        ok, t = self.usable_now(self.cur, now)
-        log(f"启动补查：{len(missed)} 个对话最近因额度用完而停下，当前槽 {self.cur} "
-            f"{'可用，直接续答' if ok else '不可用，切号'}")
+        ok, _ = self.usable_now(self.cur, now)
+        if ok:
+            log(t("启动补查：{n} 个对话最近因额度用完而停下，当前槽 {slot} 可用，直接续答", n=len(missed), slot=self.cur))
+        else:
+            log(t("启动补查：{n} 个对话最近因额度用完而停下，当前槽 {slot} 不可用，切号", n=len(missed), slot=self.cur))
         self.enqueue(missed, now - 1)
         if not ok:
-            self.rotate(now, f"槽 {self.cur} 额度用完（启动补查）")
+            self.rotate(now, t("槽 {slot} 额度用完（启动补查）", slot=self.cur))
 
     # ----- 主循环 -----
     def run(self):
         signal.signal(signal.SIGTERM, lambda *a: setattr(self, "stopping", True))
         signal.signal(signal.SIGINT, lambda *a: setattr(self, "stopping", True))
         cfg = eng.load_config()
-        log(f"守护进程启动：自动切号{'开' if cfg['enabled'] else '关'}，当前槽 {self.cur}，"
-            f"续答队列 {len(self.st['queue'])} 个")
+        log(t("守护进程启动：自动切号开，当前槽 {slot}，续答队列 {n} 个", slot=self.cur, n=len(self.st['queue']))
+            if cfg['enabled'] else
+            t("守护进程启动：自动切号关，当前槽 {slot}，续答队列 {n} 个", slot=self.cur, n=len(self.st['queue'])))
         self.tracker.poll()                  # 建立基线（启动前的历史不触发）
         if cfg["enabled"]:
             self.catch_up(time.time())
@@ -1292,10 +1297,10 @@ class Daemon:
             try:
                 self.tick()
             except Exception as e:
-                log(f"主循环异常（继续运行）：{type(e).__name__}: {e}")
+                log(t("主循环异常（继续运行）：{err}", err=f"{type(e).__name__}: {e}"))
             time.sleep(POLL)
-        self.save("off", "守护进程已停止")
-        log("守护进程退出")
+        self.save("off", t("守护进程已停止"))
+        log(t("守护进程退出"))
 
     def take_requests(self, now):
         """engine.py --resume / --continue 留下的续答请求：字符串是 --resume（打开对话给人看），
@@ -1319,10 +1324,10 @@ class Daemon:
         if sets:
             self.queue_settings(sets, now)
         if manual:
-            log(f"收到手动续答请求：{', '.join(t[:8] for t in manual)}")
+            log(t("收到手动续答请求：{ids}", ids=', '.join(x[:8] for x in manual)))
             self.enqueue(set(manual), now, manual=True)
         if bg:
-            log(f"会话页点了「继续」：{', '.join(t[:8] for t in bg)}")
+            log(t("会话页点了「继续」：{ids}", ids=', '.join(x[:8] for x in bg)))
             self.continue_now(bg, now)
 
     def queue_pauses(self, tids, now):
@@ -1342,8 +1347,8 @@ class Daemon:
         pq = self.st.setdefault("pause_q", [])
         run = [t for t in tids if last_turn_end(t) == "task_started" and not any(i["thread"] == t for i in pq)]
         pq.extend({"thread": t, "added": now, "linked": 0} for t in run)
-        log(f"会话页点了「暂停」：{', '.join(t[:8] for t in tids)}"
-            + (f"（{len(gone)} 个移出续答队列）" if gone else "") + (f"，{len(run)} 个正在跑的去停下" if run else ""))
+        log(t("会话页点了「暂停」：{ids}", ids=', '.join(x[:8] for x in tids))
+            + (t("（{n} 个移出续答队列）", n=len(gone)) if gone else "") + (t("，{n} 个正在跑的去停下", n=len(run)) if run else ""))
 
     def process_pauses(self, now):
         """一次停一个：App 里有窗口接管这个对话就直接停；没有就后台深链打开再停。2 分钟停不下就放弃"""
@@ -1358,12 +1363,12 @@ class Daemon:
             ev = find_last(files[0], LIFECYCLE)
         if not ev or ev[0] != "task_started":
             q.pop(0)
-            log(f"对话 {tid[:8]}… 这一轮已经停了，不用再暂停")
+            log(t("对话 {id}… 这一轮已经停了，不用再暂停", id=tid[:8]))
             return
         if now - item["added"] > 120:
             q.pop(0)
-            log(f"暂停对话 {tid[:8]}…：2 分钟没能停下，放弃")
-            notify("有对话没能暂停，请在 ChatGPT 里手动点停止", "warn", "session")
+            log(t("暂停对话 {id}…：2 分钟没能停下，放弃", id=tid[:8]))
+            notify(t("有对话没能暂停，请在 ChatGPT 里手动点停止"), "warn", "session")
             return
         try:
             with Bus() as bus:
@@ -1379,10 +1384,10 @@ class Daemon:
             ok, err = False, f"{type(e).__name__}: {e}"
         if ok:
             q.pop(0)
-            log(f"已暂停对话 {tid[:8]}…（停下了正在跑的这一轮）")
+            log(t("已暂停对话 {id}…（停下了正在跑的这一轮）", id=tid[:8]))
         else:
             item["retry_at"] = now + 5
-            log(f"暂停对话 {tid[:8]}… 未成功（{err}），5 秒后重试")
+            log(t("暂停对话 {id}… 未成功（{err}），5 秒后重试", id=tid[:8], err=err))
 
     def queue_settings(self, reqs, now):
         """会话页改模型 / 推理强度 / 速度：记进待办，process_settings 逐个经总线改；同一对话的合并成一条"""
@@ -1393,7 +1398,8 @@ class Daemon:
                 item["settings"].update(r["settings"])
             else:
                 q.append({"thread": r["thread"], "settings": dict(r["settings"]), "added": now, "linked": 0})
-        log(f"会话页改模型 / 速度：{len(reqs)} 个对话 → " + "、".join(f"{k}={v}" for k, v in reqs[0]["settings"].items()))
+        log(t("会话页改模型 / 速度：{n} 个对话 → {settings}", n=len(reqs),
+              settings=t("、").join(f"{k}={v}" for k, v in reqs[0]["settings"].items())))
 
     def process_settings(self, now):
         """一次改一个：App 里已有窗口接管这个对话就直接改；没有就在后台用深链打开它（窗口会闪一下，焦点还回去）。
@@ -1405,8 +1411,8 @@ class Daemon:
         tid = item["thread"]
         if now - item["added"] > 600:
             q.pop(0)
-            log(f"改对话 {tid[:8]}… 的模型 / 速度：10 分钟没能生效，放弃")
-            notify("有对话的模型 / 速度没改成功，请在 ChatGPT 里手动改", "warn", "session")
+            log(t("改对话 {id}… 的模型 / 速度：10 分钟没能生效，放弃", id=tid[:8]))
+            notify(t("有对话的模型 / 速度没改成功，请在 ChatGPT 里手动改"), "warn", "session")
             return
         s = item["settings"]
         params = {}
@@ -1430,10 +1436,11 @@ class Daemon:
             ok, err = False, f"{type(e).__name__}: {e}"
         if ok:
             q.pop(0)
-            log(f"已改对话 {tid[:8]}… 的设置（下一轮起生效）：" + "、".join(f"{k}={v}" for k, v in s.items()))
+            log(t("已改对话 {id}… 的设置（下一轮起生效）：{settings}", id=tid[:8],
+                  settings=t("、").join(f"{k}={v}" for k, v in s.items())))
         else:
             item["retry_at"] = now + 10
-            log(f"改对话 {tid[:8]}… 的设置未成功（{err}），10 秒后重试")
+            log(t("改对话 {id}… 的设置未成功（{err}），10 秒后重试", id=tid[:8], err=err))
 
     def continue_now(self, tids, now):
         """会话页的「继续」/「全部继续」：后台排队续答，插到队列最前面马上处理。
@@ -1451,7 +1458,7 @@ class Daemon:
             else:
                 item = {"thread": tid, "since": now, "added": now, "base": last_start(tid), "linked": 0,
                         "manual": False, "auto": False, "bg": True}
-                log(f"对话 {tid[:8]}… 加入续答队列")
+                log(t("对话 {id}… 加入续答队列", id=tid[:8]))
             front.append(item)
         self.st["queue"] = front + q
 
@@ -1462,7 +1469,7 @@ class Daemon:
         cur = eng.current_slot()
         if cur != self.cur:
             if not self.st.get("switching"):
-                log(f"检测到手动切号：{self.cur} → {cur}")
+                log(t("检测到手动切号：{old} → {new}", old=self.cur, new=cur))
                 self.st["last_switch_at"] = now
                 self.tracker.forget_turns()
             self.cur = cur
@@ -1480,7 +1487,7 @@ class Daemon:
             self.check_stall(cfg, now)
         elif self.st.get("wait") or self.st.get("drain") or \
                 any(not (q.get("manual") or q.get("auto") or q.get("bg")) for q in self.st["queue"]):
-            log("自动切号已关闭，清空等待和自动续答队列")
+            log(t("自动切号已关闭，清空等待和自动续答队列"))
             self.st["wait"] = self.st["drain"] = None
             self.st["queue"] = [q for q in self.st["queue"] if q.get("manual") or q.get("auto") or q.get("bg")]
         self.check_done(cfg, now)            # 回合结束后自动继续：有自己的开关
@@ -1490,6 +1497,153 @@ class Daemon:
         self.process_queue(cfg, now)
         self.save(*self.status_text(cfg))
 
+
+# ---------- 英文译文 ----------
+# 本文件里 t("…") 用到的句子；engine.py 的 EN 表里有同一句的，译文要和那边一样
+eng.EN.update({
+    "写消息中心失败：{err}": "Failed to write to Messages: {err}",
+    "未知": "unknown",                       # 和 engine.py 一致
+    "额度已用满": "Usage limit reached",
+    "总线握手没拿到 clientId": "Bus handshake returned no clientId",
+    "总线连接被关闭": "Bus connection closed",
+    "App 未在 20 秒内响应": "App didn't respond within 20 s",
+    "没有生效": "Didn't take effect",
+    "App 未在 15 秒内响应": "App didn't respond within 15 s",
+    "app-server 没有完成握手": "app-server didn't complete the handshake",
+    "app-server 没有响应": "app-server didn't respond",
+    "保存状态失败：{err}": "Failed to save state: {err}",
+    # 状态（App 顶部 / 概览）
+    "自动切号已关闭": "Auto-switch is off",
+    "正在切到 {to}，等待 ChatGPT 启动": "Switching to {to}, waiting for ChatGPT to start",
+    "额度用完，等其他对话停下后切号": "Usage used up, switching once other conversations stop",
+    "全部账号额度用完，{at} 自动继续": "All accounts used up, resuming automatically at {at}",
+    "正在续答 {n} 个对话": "Resuming conversations: {n}",
+    "监控中": "Monitoring",
+    "守护进程已停止": "Background service stopped",
+    # 自动开始计时 / 目录同步
+    "槽 {slot}": "Slot {slot}",
+    "自动开始计时：{mail} 的 5 小时额度已开始计时": "Auto-start timer: started the 5-hour timer for {mail}",
+    "自动开始计时失败：{mail}：{err}，{n} 分钟后再试": "Auto-start timer failed: {mail}: {err}, retrying in {n} min",
+    "{mail} 自动开始计时失败：{err}": "Auto-start timer failed for {mail}: {err}",
+    "同步账号目录失败：{err}": "Failed to sync the account directory: {err}",
+    # 撞限 → 切号 / 等待
+    "检测到撞限，但当前凭证不属于任何槽位，无法自动切":
+        "Usage limit hit, but the current credentials don't belong to any slot; can't change accounts automatically",
+    "槽 {slot} 出现额度用满信号，但联网确认仍可用，忽略":
+        "Slot {slot} signaled the limit was reached, but an online check says it's still usable; ignoring",
+    "撞限，额度查询失败（{err}）": "Usage limit hit; usage check failed ({err})",
+    "槽 {slot} 额度用完（{why}）": "Slot {slot} used up ({why})",
+    "还有 {n} 个对话在跑，等它们都自己停下再切号（最多等 {m} 分钟）":
+        "Conversations still running: {n}; letting them stop on their own before switching (up to {m} min)",
+    "槽 {slot} 额度用完": "Slot {slot} used up",
+    "等了 {m} 分钟还有 {n} 个对话在跑，照常切号（它们会被打断，切号后打开对话续答）":
+        "After {m} min, conversations still running: {n}; switching anyway "
+        "(they'll be interrupted and resumed after the switch)",
+    "同账号上的对话都已停下，切号": "All conversations on this account have stopped; switching",
+    "切号前补查到 {n} 个因额度用完停下、还没排上的对话，一并续答":
+        "Before switching, found conversations stopped by the limit but not queued: {n}; resuming them too",
+    "{reason}，其他账号也都不可用，等到 {at} 再试": "{reason}; no other account is available, trying again at {at}",
+    "所有账号额度都用完了，{at} 自动继续": "All accounts are used up; resuming automatically at {at}",
+    "{reason} → 切到槽 {slot}": "{reason} → switching to slot {slot}",
+    "切号失败：{err}": "Switch failed: {err}",
+    "自动切号失败：{err}": "Auto-switch failed: {err}",
+    "切号失败": "Switch failed",
+    "ChatGPT 启动时跳到了最前面，已把焦点还给原来的窗口":
+        "ChatGPT jumped to the front on launch; focus returned to the previous window",
+    "已切到槽 {slot}（{email}），等待 ChatGPT 就绪": "Switched to slot {slot} ({email}), waiting for ChatGPT to be ready",
+    "已切到 {email}，稍后在原对话里继续": "Switched to {email}; continuing in the original conversations shortly",
+    "当前槽 {slot} 已可用，结束等待": "Current slot {slot} is available; done waiting",
+    "槽 {slot} 额度已恢复，无需切号，直接续答": "Slot {slot} has recovered; no switch needed, resuming directly",
+    "额度已恢复，继续工作": "Usage recovered, back to work",
+    "等待到点": "Done waiting",
+    "到点后仍没有可用账号，继续等到 {at}": "Still no account available; next try at {at}",
+    # 续答
+    "对话 {id}… 是在会话页暂停的，不自动续答": "Conversation {id}… was paused in Sessions; not auto-resuming",
+    "对话 {id}… 加入续答队列": "Conversation {id}… added to the resume queue",
+    "切号后 ChatGPT 迟迟没有启动，放弃等待": "ChatGPT didn't start after the switch; gave up waiting",
+    "切号后 ChatGPT 的内部总线迟迟不可用，放弃等待":
+        "ChatGPT's internal bus stayed unavailable after the switch; gave up waiting",
+    "ChatGPT 已就绪（切号后 {sec:.0f} 秒）": "ChatGPT is ready ({sec:.0f} s after the switch)",
+    "续答跳过：找不到对话 {id}… 的记录文件": "Resume skipped: no session file found for conversation {id}…",
+    "对话 {id}… 已在别处继续，撤掉了排队的「{prompt}」":
+        "Conversation {id}… continued elsewhere; withdrew the queued “{prompt}”",
+    "续答成功：对话 {id}… 已在后台跑起排队的「{prompt}」":
+        "Resume succeeded: conversation {id}… started the queued “{prompt}” in the background",
+    "已切号并在原对话里继续": "Switched accounts and continued in the original conversation",
+    "已在原对话里继续": "Continued in the original conversation",
+    "对话 {id}… 已有新轮次（可能已手动继续），不再续答":
+        "Conversation {id}… already has a new turn (maybe continued manually); not resuming",
+    "续答放弃：{m} 分钟内没能在对话 {id}… 里继续": "Resume gave up: couldn't continue conversation {id}… within {m} min",
+    "没能自动继续对话，请在原对话里手动发一句「继续」":
+        "Couldn't continue the conversation automatically; send “continue” in it manually",
+    "切号后没能自动续答，请在原对话里手动发一句「继续」":
+        "Couldn't auto-resume after the switch; send “continue” in the original conversation manually",
+    "对话 {id}… 上一轮被打断，ChatGPT 会暂停它的待发队列，改为打开对话发送":
+        "Conversation {id}…: last turn was interrupted, so ChatGPT pauses its queue; opening the conversation to send instead",
+    "已把「{prompt}」排进对话 {id}… 的待发队列，等 ChatGPT 在后台跑起来":
+        "Queued “{prompt}” in conversation {id}…; ChatGPT will run it in the background",
+    "对话 {id}… 后台排队续答不可用（{err}），改用深链":
+        "Conversation {id}…: background queue unavailable ({err}); using a deep link",
+    "对话 {id}… 排队 {sec} 秒还没跑起来，已撤掉，改用深链":
+        "Conversation {id}…: queued {sec} s without starting; withdrawn, using a deep link",
+    "续答成功：对话 {id}… 排队的「{prompt}」已被 ChatGPT 取走运行":
+        "Resume succeeded: ChatGPT picked up the queued “{prompt}” in conversation {id}…",
+    "App 还没打开对话 {id}…，已发深链": "App hasn't opened conversation {id}… yet; sent a deep link",
+    "App 还没打开对话 {id}…，已在后台发深链": "App hasn't opened conversation {id}… yet; sent a deep link in the background",
+    "ChatGPT 打开对话时跳到了最前面，已把焦点还给原来的窗口":
+        "ChatGPT jumped to the front when opening the conversation; focus returned to the previous window",
+    "续答时总线异常：{err}": "Bus problem while resuming: {err}",
+    "续答成功：已在对话 {id}… 里发送「{prompt}」": "Resume succeeded: sent “{prompt}” in conversation {id}…",
+    "续答未成功（{err}），10 秒后重试": "Resume didn't go through ({err}); retrying in 10 s",
+    # 回合结束后自动继续 / 停滞看门狗
+    "对话 {id}… 有你发的新消息，自动继续重新计数": "Conversation {id}… has a new message from you; auto-continue count reset",
+    "对话 {id}… 已连续自动继续 {n} 次，到上限，停下等你":
+        "Conversation {id}… auto-continued {n} times in a row; limit reached, stopped for you",
+    "有对话已连续自动继续 {n} 次，到上限停下了，请看一下":
+        "A conversation auto-continued {n} times in a row and hit the limit; please take a look",
+    "对话 {id}… 回合正常结束 {m} 分钟没有新消息，自动继续（第 {n}/{max} 次）":
+        "Conversation {id}…: turn ended normally, no new messages for {m} min; auto-continuing ({n}/{max})",
+    "对话 {id}… 已 {m:.0f} 分钟没有新进展": "Conversation {id}…: no new progress for {m:.0f} min",
+    "有对话已 {m:.0f} 分钟没有新进展": "A conversation has had no new progress for {m:.0f} min",
+    "停滞干预（对话 {id}…）：{res}": "Stalled turn nudge (conversation {id}…): {res}",
+    "已送「{prompt}」": "sent “{prompt}”",
+    "未成功 {err}": "didn't go through: {err}",
+    # 启动 / 主循环
+    "启动补查：{n} 个对话最近因额度用完而停下，当前槽 {slot} 可用，直接续答":
+        "Startup check: conversations recently stopped by the limit: {n}; current slot {slot} is available, resuming directly",
+    "启动补查：{n} 个对话最近因额度用完而停下，当前槽 {slot} 不可用，切号":
+        "Startup check: conversations recently stopped by the limit: {n}; current slot {slot} is unavailable, switching",
+    "槽 {slot} 额度用完（启动补查）": "Slot {slot} used up (startup check)",
+    "守护进程启动：自动切号开，当前槽 {slot}，续答队列 {n} 个":
+        "Background service started: Auto-switch on, current slot {slot}, resume queue {n}",
+    "守护进程启动：自动切号关，当前槽 {slot}，续答队列 {n} 个":
+        "Background service started: Auto-switch off, current slot {slot}, resume queue {n}",
+    "主循环异常（继续运行）：{err}": "Main loop exception (still running): {err}",
+    "守护进程退出": "Background service exited",
+    # 会话页：继续 / 暂停 / 改模型
+    "收到手动续答请求：{ids}": "Manual resume request received: {ids}",
+    "会话页点了「继续」：{ids}": "Sessions: Continue clicked: {ids}",
+    "会话页点了「暂停」：{ids}": "Sessions: Pause clicked: {ids}",
+    "（{n} 个移出续答队列）": " ({n} removed from the resume queue)",
+    "，{n} 个正在跑的去停下": ", stopping {n} running",
+    "对话 {id}… 这一轮已经停了，不用再暂停": "Conversation {id}…: turn already stopped, no need to pause",
+    "暂停对话 {id}…：2 分钟没能停下，放弃": "Pause conversation {id}…: couldn't stop it within 2 min, gave up",
+    "有对话没能暂停，请在 ChatGPT 里手动点停止": "A conversation couldn't be paused; click Stop in ChatGPT manually",
+    "已暂停对话 {id}…（停下了正在跑的这一轮）": "Paused conversation {id}… (stopped the running turn)",
+    "暂停对话 {id}… 未成功（{err}），5 秒后重试": "Pausing conversation {id}… didn't go through ({err}); retrying in 5 s",
+    "会话页改模型 / 速度：{n} 个对话 → {settings}": "Sessions: change model / speed for conversations: {n} → {settings}",
+    "、": ", ",
+    "改对话 {id}… 的模型 / 速度：10 分钟没能生效，放弃":
+        "Change model / speed for conversation {id}…: didn't take effect within 10 min, gave up",
+    "有对话的模型 / 速度没改成功，请在 ChatGPT 里手动改":
+        "Couldn't change a conversation's model / speed; change it in ChatGPT manually",
+    "已改对话 {id}… 的设置（下一轮起生效）：{settings}":
+        "Changed settings for conversation {id}… (from the next turn): {settings}",
+    "改对话 {id}… 的设置未成功（{err}），10 秒后重试":
+        "Changing settings for conversation {id}… didn't go through ({err}); retrying in 10 s",
+    "检测到手动切号：{old} → {new}": "Manual switch detected: {old} → {new}",
+    "自动切号已关闭，清空等待和自动续答队列": "Auto-switch turned off; clearing the waiting state and auto-resume queue",
+})
 
 if __name__ == "__main__":
     if "--models-json" in sys.argv:

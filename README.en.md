@@ -7,7 +7,7 @@
 **Run several ChatGPT / Codex accounts from one window.**<br>
 When one account hits its usage limit, switch to the next one automatically and pick the interrupted conversation back up.<br>
 Continue or pause every Codex conversation from one table, and change model, reasoning effort and speed on the fly.<br>
-Team renewals, member payments and limit-reset credits all in one place.
+Team renewals, member payments and limit-reset credits all in one place — in English or Chinese.
 
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#requirements)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M4-555555)](#requirements)
@@ -18,8 +18,8 @@ Team renewals, member payments and limit-reset credits all in one place.
 [**⬇ Download**](../../releases/latest) · [Features](#features) · [Sessions](#sessions) · [Install](#install) · [FAQ](#faq) · [中文](README.md)
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
-  <img src="docs/images/overview.png" alt="Overview: remaining quota per account, auto-switch status, renewals and payments due" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/en/overview-dark.png">
+  <img src="docs/images/en/overview.png" alt="Overview: remaining quota per account, auto-switch status, renewals and payments due" width="100%">
 </picture>
 
 </div>
@@ -29,7 +29,7 @@ Team renewals, member payments and limit-reset credits all in one place.
 > It relies on internal endpoints used by the ChatGPT desktop app, which may change at any time. Rotating
 > several accounts may violate OpenAI's terms of use — use it at your own risk.
 >
-> The UI is in Simplified Chinese. All accounts, emails and team names in the screenshots are fake demo data (`scripts/demo.sh`).
+> The UI comes in English and Simplified Chinese (Settings → Language). All accounts, emails and team names in the screenshots are fake demo data (`scripts/demo.sh`).
 
 ## Why
 
@@ -51,9 +51,10 @@ it switches to the next available one and sends "continue" in every conversation
 | 📊 **Quota at a glance** | 5-hour and weekly remaining quota, reset times and when each exhausted account comes back |
 | ▶️ **Keep going** | When the model stops on its own (not a limit), send "continue" automatically — capped per conversation |
 | ⏱ **Start the clock** | Start an unused account's 5-hour window now, so it has reset by the time you need it — or let the service do it for every account |
-| 🎟 **Reset credits** | Lists free limit-reset credits and their expiry; use one with a confirmation |
+| 🎟 **Reset credits** | Lists each account's (workspace's) own free limit-reset credits and their expiry; use one with a confirmation |
 | 🏢 **Teams & subscriptions** | Renewal / expiry dates, seat usage, members and pending invites of every team workspace |
 | 💰 **Member payments** | Monthly due dates per member, overdue in red, "mark as paid" moves to next month |
+| 🌐 **English / 中文** | Switch the UI language in Settings and the app relaunches; new logs and notifications follow, and older messages and logs are shown in the current language too |
 | 🔔 **Notifications** | Renewals, expiries, failed payments, dues, new members, expiring credits — 3 days ahead |
 | 🛡 **Cloudflare-proof** | When Cloudflare blocks the team / subscription / member endpoints, they're fetched through the app's built-in WebKit instead |
 | 🔒 **Local only** | No server, no data collection |
@@ -68,16 +69,20 @@ current account with 5-hour and weekly bars.
 
 <table>
   <tr>
-    <td><img src="docs/images/accounts.png" alt="Accounts"></td>
-    <td><img src="docs/images/teams.png" alt="Teams"></td>
+    <td><img src="docs/images/en/accounts.png" alt="Accounts"></td>
+    <td><img src="docs/images/en/teams.png" alt="Teams"></td>
   </tr>
   <tr>
-    <td><img src="docs/images/members.png" alt="Member payments"></td>
-    <td><img src="docs/images/resets.png" alt="Reset credits"></td>
+    <td><img src="docs/images/en/members.png" alt="Member payments"></td>
+    <td><img src="docs/images/en/resets.png" alt="Reset credits"></td>
   </tr>
   <tr>
-    <td><img src="docs/images/messages.png" alt="Notifications"></td>
-    <td><img src="docs/images/settings.png" alt="Settings"></td>
+    <td><img src="docs/images/en/messages.png" alt="Notifications"></td>
+    <td><img src="docs/images/en/settings.png" alt="Settings"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/en/logs.png" alt="Logs"></td>
+    <td><img src="docs/images/en/member-edit.png" alt="Edit a member: WeChat name, next due date, mark as paid"></td>
   </tr>
 </table>
 
@@ -100,12 +105,12 @@ Everything below runs in the background — ChatGPT is not brought to the front.
 
 Changes apply from the next turn; a conversation that isn't open in ChatGPT is opened in the background briefly and focus is handed back.
 
-<img src="docs/images/sessions.png" alt="Sessions: check a few conversations and continue, pause or adjust the model from the header" width="100%">
+<img src="docs/images/en/sessions.png" alt="Sessions: check a few conversations and continue, pause or adjust the model from the header" width="100%">
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/sessions-model.png" alt="Model menu: model, reasoning effort, speed"></td>
-    <td width="50%"><img src="docs/images/sessions-bulk.png" alt="Bulk adjust: model, reasoning effort, speed for the checked conversations"></td>
+    <td width="50%"><img src="docs/images/en/sessions-model.png" alt="Model menu: model, reasoning effort, speed"></td>
+    <td width="50%"><img src="docs/images/en/sessions-bulk.png" alt="Bulk adjust: model, reasoning effort, speed for the checked conversations"></td>
   </tr>
   <tr>
     <td align="center">Click the Model column: model, effort, speed</td>
@@ -141,7 +146,7 @@ git clone https://github.com/autoswitch-accounts/chatgpt-codex-auto-switch.git &
 **Just look around** with fake data — no network, never touches your accounts:
 
 ```bash
-scripts/demo.sh
+scripts/demo.sh -AppleLanguages '(en)'
 ```
 
 ## First run
@@ -188,6 +193,21 @@ The app only talks to `chatgpt.com` and `auth.openai.com`.
 <summary><b>Will it spend my reset credits automatically?</b></summary>
 
 Never. A reset credit is only used when you click *Reset* and confirm.
+</details>
+
+<details>
+<summary><b>Are reset credits shared between workspaces of the same email?</b></summary>
+
+No. Credits belong to an account (workspace): the same email in two team workspaces has separate credits with different ids,
+and using one clears only that workspace's usage. Each slot lists its own credits.
+</details>
+
+<details>
+<summary><b>How do I switch the language?</b></summary>
+
+*Settings → Language*: Follow System, 中文 or English. The app quits and reopens itself. The background service writes new logs and
+notifications in that language, and older ones are translated when shown. If your resume prompt is still the default
+(「继续」/ "Continue"), it switches along; a custom prompt is left alone.
 </details>
 
 <details>

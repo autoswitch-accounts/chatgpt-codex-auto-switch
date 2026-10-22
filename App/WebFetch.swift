@@ -30,7 +30,7 @@ enum WebFetch {
         }
         web.navigationDelegate = loader
         web.load(URLRequest(url: URL(string: "https://chatgpt.com/backend-api/")!))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 45) { loader.finish(false, "打开 chatgpt.com 超时") }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 45) { loader.finish(false, L("打开 chatgpt.com 超时")) }
     }
 
     /// 后台线程逐行读请求，每个请求回主线程在页面里执行，一次一个
@@ -39,7 +39,7 @@ enum WebFetch {
             while let line = readLine() {
                 guard let d = line.data(using: .utf8),
                       let req = try? JSONSerialization.jsonObject(with: d) as? [String: String] else {
-                    write(["status": 0, "body": "请求格式不对"]); continue
+                    write(["status": 0, "body": L("请求格式不对")]); continue
                 }
                 let done = DispatchSemaphore(value: 0)
                 Task { @MainActor in
@@ -63,7 +63,7 @@ enum WebFetch {
             if let s = r as? String, let d = s.data(using: .utf8), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
                 return o
             }
-            return ["status": 0, "body": "页面没有返回结果"]
+            return ["status": 0, "body": L("页面没有返回结果")]
         } catch {
             return ["status": 0, "body": error.localizedDescription]
         }

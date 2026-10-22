@@ -16,13 +16,13 @@ enum NoticeLook {
     }
     static func kindText(_ k: String) -> String {
         switch k {
-        case "billing": return "续费"
-        case "member":  return "成员"
-        case "quota":   return "额度"
-        case "pay":     return "交费"
-        case "switch":  return "切号"
-        case "session": return "会话"
-        default:        return "系统"
+        case "billing": return L("续费#类别", zh: "续费")
+        case "member":  return L("成员")
+        case "quota":   return L("额度")
+        case "pay":     return L("交费")
+        case "switch":  return L("切号")
+        case "session": return L("会话")
+        default:        return L("系统")
         }
     }
 }
@@ -49,7 +49,7 @@ struct MessagesPage: View {
         var out: [(String, [Notice])] = []
         for n in items {
             let d = Date(timeIntervalSince1970: n.created)
-            let key = cal.isDateInToday(d) ? "今天" : cal.isDateInYesterday(d) ? "昨天" : TimeText.date(n.created)
+            let key = cal.isDateInToday(d) ? L("今天") : cal.isDateInYesterday(d) ? L("昨天") : TimeText.date(n.created)
             if out.last?.0 == key { out[out.count - 1].1.append(n) } else { out.append((key, [n])) }
         }
         return out
@@ -61,7 +61,7 @@ struct MessagesPage: View {
                 Picker("", selection: $filter) {
                     Text("全部").tag("all")
                     Text("未读 \(store.unread)").tag("unread")
-                    Text("续费").tag("billing")
+                    Text(L("续费#类别", zh: "续费")).tag("billing")
                     Text("交费").tag("pay")
                     Text("成员").tag("member")
                     Text("额度").tag("quota")
@@ -74,7 +74,7 @@ struct MessagesPage: View {
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
             if items.isEmpty {
-                EmptyHint(icon: "bell.slash", text: filter == "unread" ? "没有未读消息" : "暂无消息")
+                EmptyHint(icon: "bell.slash", text: filter == "unread" ? L("没有未读消息") : L("暂无消息"))
                     .frame(maxHeight: .infinity)
             } else {
                 List {
@@ -98,7 +98,7 @@ struct MessagesPage: View {
         }
         .navigationTitle("消息")
         .navigationSubtitle(store.unread > 0 ? "\(store.unread) 条未读" : "全部已读")
-        .pageToolbar(search: $query, prompt: "搜索消息") {
+        .pageToolbar(search: $query, prompt: L("搜索消息")) {
             Button { store.markRead([]) } label: { Label("全部已读", systemImage: "checkmark.circle") }
                 .disabled(store.unread == 0)
             Button { store.loadDirectory(refresh: true) } label: { Label("检查新消息", systemImage: "arrow.triangle.2.circlepath") }
@@ -132,7 +132,7 @@ struct NoticeRow: View {
     }
 
     private var meta: String {
-        var s = "收到于 " + TimeText.short(n.created)
+        var s = L("收到于 \(TimeText.short(n.created))")
         if n.at > now { s += " · \(TimeText.until(n.at, now: now))" }
         return s
     }

@@ -10,14 +10,14 @@ enum Page: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .overview: return "概览"
-        case .messages: return "消息"
-        case .accounts: return "账号"
-        case .teams:    return "团队"
-        case .members:  return "成员"
-        case .sessions: return "会话"
-        case .logs:     return "日志"
-        case .settings: return "设置"
+        case .overview: return L("概览")
+        case .messages: return L("消息")
+        case .accounts: return L("账号")
+        case .teams:    return L("团队")
+        case .members:  return L("成员")
+        case .sessions: return L("会话")
+        case .logs:     return L("日志")
+        case .settings: return L("设置")
         }
     }
     var icon: String {
@@ -46,15 +46,15 @@ struct Sidebar: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
-                header("工作台", first: true)
+                header(L("工作台"), first: true)
                 item(.overview)
                 item(.messages, badge: store.unread > 0 ? "\(store.unread)" : nil)
-                header("资源")
+                header(L("资源"))
                 item(.accounts, badge: "\(store.slots.filter { $0.usable(store.now) }.count)/\(store.slots.count)")
                 item(.teams, badge: store.teams.isEmpty ? nil : "\(store.teams.count)")
                 let due = store.duePayments(days: 3).count
                 item(.members, badge: due > 0 ? "\(due)" : nil)
-                header("运行")
+                header(L("运行"))
                 item(.sessions, badge: store.activeSessions.isEmpty ? nil : "\(store.activeSessions.count)")
                 item(.logs)
                 Color.clear.frame(height: 12)
@@ -126,8 +126,8 @@ struct Sidebar: View {
                 }
                 // 有 5 小时额度的账号两条都有；只有周额度的套餐只显示本周
                 VStack(spacing: 10) {
-                    if !c.noFiveHour { quotaBar("5 小时", c.usage.primary?.remaining(now: store.now)) }
-                    quotaBar("本周", c.usage.secondary?.remaining(now: store.now))
+                    if !c.noFiveHour { quotaBar(L("5 小时"), c.usage.primary?.remaining(now: store.now)) }
+                    quotaBar(L("本周"), c.usage.secondary?.remaining(now: store.now))
                 }
                 Divider()
             }
@@ -149,7 +149,8 @@ struct Sidebar: View {
     private func quotaBar(_ title: String, _ left: Double?) -> some View {
         let l = max(0, min(100, left ?? 0))
         return HStack(spacing: 8) {
-            Text(title).font(.caption).foregroundStyle(.secondary).frame(width: 38, alignment: .leading)
+            Text(title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .frame(width: AppLanguage.active == "en" ? 56 : 38, alignment: .leading)   // 英文「This week」更宽
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Palette.track)
@@ -164,13 +165,13 @@ struct Sidebar: View {
 
     private var sideStatus: String {
         let a = store.auto
-        if !a.enabled { return "自动切号已关闭" }
-        if !a.alive { return "后台服务未运行" }
+        if !a.enabled { return L("自动切号已关闭") }
+        if !a.alive { return L("后台服务未运行") }
         switch a.phase {
-        case "switching": return "正在切号…"
-        case "waiting":   return "等待额度恢复 " + TimeText.short(a.waitUntil)
-        case "resuming":  return "正在续答"
-        default:          return "自动切号监控中"
+        case "switching": return L("正在切号…")
+        case "waiting":   return L("等待额度恢复 \(TimeText.short(a.waitUntil))")
+        case "resuming":  return L("正在续答")
+        default:          return L("自动切号监控中")
         }
     }
 }
@@ -208,7 +209,9 @@ struct RootView: View {
             if let i = CommandLine.arguments.firstIndex(of: "--focus"), i + 1 < CommandLine.arguments.count {
                 store.focus = CommandLine.arguments[i + 1]
             }
-            if CommandLine.arguments.contains("--show-resets") { store.showResets = true }
+            if CommandLine.arguments.contains("--show-resets") {   // 晚一点再弹：弹窗先出来的话窗口进不了全屏
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { store.showResets = true }
+            }
             // 截图用：目录加载完后打开某个成员的编辑框
             if let i = CommandLine.arguments.firstIndex(of: "--edit-member"), i + 1 < CommandLine.arguments.count {
                 let mail = CommandLine.arguments[i + 1].lowercased()
@@ -224,16 +227,15 @@ struct RootView: View {
             Button("立即重置") { store.useReset(a) }
             Button("取消", role: .cancel) {}
         } message: { a in
-            Text("\(a.slot.email)（槽 \(a.slot.slot)）\n会立即清空这个账号的 5 小时和本周用量。\n"
-                 + "这张券 \(TimeText.short(a.credit.expiresAt)) 过期，用掉后不能撤销；该邮箱还剩 \(max(0, (store.person(of: a.slot)?.availableResets.count ?? 1) - 1)) 张。")
+            let left = max(0, store.directory.availableResets(a.slot.slot).count - 1)
+            Text(L("\(a.slot.email)（槽 \(a.slot.slot)）\n会立即清空这个账号的 5 小时和本周用量。\n这张券 \(TimeText.short(a.credit.expiresAt)) 过期，用掉后不能撤销；这个账号还剩 \(left) 张。"))
         }
         .alert("让 5 小时额度开始计时？", isPresented: Binding(get: { store.confirmStart != nil },
                                                       set: { if !$0 { store.confirmStart = nil } }), presenting: store.confirmStart) { s in
             Button("开始计时") { store.startWindow(s) }
             Button("取消", role: .cancel) {}
         } message: { s in
-            Text("\(s.email)（槽 \(s.slot)）\n会用这个账号发一句极短的消息（不切号、不影响当前对话），"
-                 + "5 小时窗口从现在开始，\(TimeText.short(store.now + 5 * 3600)) 前后重置。会用掉很少一点额度。")
+            Text(L("\(s.email)（槽 \(s.slot)）\n会用这个账号发一句极短的消息（不切号、不影响当前对话），5 小时窗口从现在开始，\(TimeText.short(store.now + 5 * 3600)) 前后重置。会用掉很少一点额度。"))
         }
         // 弹窗统一铺和正文页一样的渐变底色
         .sheet(item: $store.editingMember) { r in MemberEditSheet(store: store, row: r).background(PageBackground()) }
@@ -300,25 +302,25 @@ struct RootView: View {
 
     private var switchTitle: String {
         guard let s = store.confirmSwitch else { return "" }
-        return s.current ? "重启 ChatGPT？" : "切换到 \(s.email)？"
+        return s.current ? L("重启 ChatGPT？") : L("切换到 \(s.email)？")
     }
 
     private func switchMessage(_ s: Slot) -> String {
         var lines: [String] = []
         if !s.current {
-            lines.append("\(store.workspace(of: s)?.displayName ?? s.title) · 槽 \(s.slot)")
+            lines.append(L("\(store.workspace(of: s)?.displayName ?? s.title) · 槽 \(s.slot)"))
             if let p = s.usage.primary {
-                lines.append("5 小时剩余 \(Int(p.remaining(now: store.now).rounded()))% · 本周剩余 \(Int(max(0, s.remainingWeek(store.now)).rounded()))%")
+                lines.append(L("5 小时剩余 \(Int(p.remaining(now: store.now).rounded()))% · 本周剩余 \(Int(max(0, s.remainingWeek(store.now)).rounded()))%"))
             }
             if let until = s.exhaustedUntil(store.now) {
-                lines.append("⚠️ 这个账号额度已用完，\(TimeText.short(until)) 才恢复")
+                lines.append(L("⚠️ 这个账号额度已用完，\(TimeText.short(until)) 才恢复"))
             }
-            if s.needsLogin { lines.append("⚠️ 这个账号的凭证已失效，切过去需要重新登录") }
+            if s.needsLogin { lines.append(L("⚠️ 这个账号的凭证已失效，切过去需要重新登录")) }
         }
-        lines.append("会退出并重新打开 ChatGPT。")
+        lines.append(L("会退出并重新打开 ChatGPT。"))
         let n = store.activeSessions.count
         if n > 0 {
-            lines.append("有 \(n) 个对话正在回复，会被打断；选「续答」会在切换后自动发「\(store.config.prompt)」让它们接着干。")
+            lines.append(L("有 \(n) 个对话正在回复，会被打断；选「续答」会在切换后自动发「\(store.config.prompt)」让它们接着干。"))
         }
         return lines.joined(separator: "\n")
     }
@@ -333,7 +335,7 @@ struct RootView: View {
                 }
                 Spacer(minLength: 0)
             }
-            EndCursorField(text: $draft, placeholder: s.workspace.isEmpty ? "显示名（留空用默认）" : "留空则显示官方名「\(s.workspace)」")
+            EndCursorField(text: $draft, placeholder: s.workspace.isEmpty ? L("显示名（留空用默认）") : L("留空则显示官方名「\(s.workspace)」"))
                 .frame(height: 22)
             HStack {
                 Spacer()
@@ -413,11 +415,11 @@ struct AddSheet: View {
     private var intro: some View {
         VStack(alignment: .leading, spacing: 13) {
             VStack(alignment: .leading, spacing: 9) {
-                step("保存当前凭证并退出 ChatGPT", auto: true)
-                step("登出当前账号（codex logout）", auto: true)
-                step("用新槽位的独立 profile 开窗", auto: true)
-                step("在窗口里登录、选择 workspace", auto: false)
-                step("识别新账号和 workspace 名、存入槽位、重开 ChatGPT", auto: true)
+                step(L("保存当前凭证并退出 ChatGPT"), auto: true)
+                step(L("登出当前账号（codex logout）"), auto: true)
+                step(L("用新槽位的独立 profile 开窗"), auto: true)
+                step(L("在窗口里登录、选择 workspace"), auto: false)
+                step(L("识别新账号和 workspace 名、存入槽位、重开 ChatGPT"), auto: true)
             }
             Text("只有第 4 步需要你操作，其余全自动。").font(.system(size: 11.5)).foregroundStyle(.secondary)
         }
@@ -452,7 +454,7 @@ struct AddSheet: View {
                     Avatar(letter: slot, size: 34)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(email).font(.system(size: 12.5, weight: .medium))
-                        Text("已存为槽位 \(slot)" + (ws.isEmpty ? "" : " · \(ws)"))
+                        Text(ws.isEmpty ? L("已存为槽位 \(slot)") : L("已存为槽位 \(slot) · \(ws)"))
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
@@ -487,18 +489,18 @@ struct AddSheet: View {
     }
     private var headTitle: String {
         switch store.addPhase {
-        case .naming:  return "识别成功"
-        case .failed:  return "添加失败"
-        case .working: return "正在添加"
-        default:       return "添加账号 / workspace"
+        case .naming:  return L("识别成功")
+        case .failed:  return L("添加失败")
+        case .working: return L("正在添加")
+        default:       return L("添加账号 / workspace")
         }
     }
     private var headSub: String {
         switch store.addPhase {
-        case .naming:  return "已存好，空间名自动读取"
-        case .failed:  return "可以关掉重试"
-        case .working: return "过程中别关这个窗口"
-        default:       return "整个流程只有输账号密码需要你操作"
+        case .naming:  return L("已存好，空间名自动读取")
+        case .failed:  return L("可以关掉重试")
+        case .working: return L("过程中别关这个窗口")
+        default:       return L("整个流程只有输账号密码需要你操作")
         }
     }
 }
@@ -603,7 +605,7 @@ enum Notifier {
             case .authorized, .provisional:
                 let c = UNMutableNotificationContent()
                 // 和以前 osascript 的样子一致：第一行是 App 名，下面是消息
-                c.title = "ChatGPT 账号"
+                c.title = L("ChatGPT 账号")
                 if body.isEmpty { c.body = title } else { c.subtitle = title; c.body = body }
                 c.sound = .default
                 center.add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil)) { err in
@@ -683,8 +685,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // 不恢复上次的窗口状态（等同 SwiftUI 的 restorationBehavior(.disabled)，那个要 macOS 15）
             NSApp.windows.forEach { $0.isRestorable = false }
             AppWindow.apply()
-            if CommandLine.arguments.contains("--fullscreen") {
-                NSApp.windows.first { $0.canBecomeMain && $0.isVisible }?.toggleFullScreen(nil)
+            if CommandLine.arguments.contains("--fullscreen"), let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }) {
+                // 截图用：固定在主屏（带菜单栏的那块）上全屏，接了外接显示器截出来的尺寸也和以前一样
+                if let main = NSScreen.screens.first { w.setFrame(main.visibleFrame, display: true) }
+                w.toggleFullScreen(nil)
             }
         }
         // 「显示」「窗口」「帮助」三个菜单系统会自己补上条目（进入全屏、最小化、帮助搜索），
@@ -740,12 +744,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         for item in main.items.dropFirst() {    // 第一个是应用菜单
             let sub = item.submenu
             let useless = sub == nil || sub === NSApp.windowsMenu || sub === NSApp.helpMenu
-                || ["View", "显示", "Window", "窗口", "Help", "帮助", "File", "文件", "Format", "格式"].contains(item.title)
+                || ["View", "显示", "Window", "窗口", "Help", "帮助", "File", "文件", "Format", "格式"].contains(item.title)  // i18n-ignore  系统菜单标题，两种语言都认
             hide(item, useless)
         }
         // 藏掉系统补的「自动填充」，再把连在一起 / 落在首尾的分隔线藏掉
         for menu in main.items.filter({ !$0.isHidden }).compactMap(\.submenu) {
-            for it in menu.items where ["自动填充", "AutoFill"].contains(it.title) { hide(it, true) }
+            for it in menu.items where ["自动填充", "AutoFill"].contains(it.title) { hide(it, true) }  // i18n-ignore
             var prevSep = true
             var lastShown: NSMenuItem?
             for it in menu.items where !(it.isHidden && !it.isSeparatorItem) {

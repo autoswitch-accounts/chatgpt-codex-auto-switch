@@ -6,15 +6,15 @@ import AppKit
 enum SessionLook {
     static func of(_ status: String) -> (String, Color) {
         switch status {
-        case "running":     return ("运行中", Palette.green)
-        case "stalled":     return ("疑似卡住", Palette.orange)
-        case "limited":     return ("额度用完中断", Palette.red)
-        case "interrupted": return ("被中断", Palette.orange)
-        case "paused":      return ("本 App 暂停", Palette.purple)
-        case "aborted":     return ("已手动停止", Palette.gray)
-        case "error":       return ("出错停止", Palette.red)
-        case "done":        return ("已完成", Palette.accent)
-        default:            return ("空闲", Palette.gray)
+        case "running":     return (L("运行中"), Palette.green)
+        case "stalled":     return (L("疑似卡住"), Palette.orange)
+        case "limited":     return (L("额度用完中断"), Palette.red)
+        case "interrupted": return (L("被中断"), Palette.orange)
+        case "paused":      return (L("本 App 暂停"), Palette.purple)
+        case "aborted":     return (L("已手动停止"), Palette.gray)
+        case "error":       return (L("出错停止"), Palette.red)
+        case "done":        return (L("已完成"), Palette.accent)
+        default:            return (L("空闲"), Palette.gray)
         }
     }
     static func rank(_ status: String) -> Int {
@@ -38,6 +38,7 @@ struct SessionTableRow: Identifiable {
 struct SessionsPage: View {
     @ObservedObject var store: Store
     @State private var filter = "active"
+    @State private var demoDone = false      // 演示参数（--demo-check / --show-bulk）只做一次
     @State private var query = ""
     @State private var order = [KeyPathComparator(\SessionTableRow.last, order: .reverse)]   // 默认最近活动在前
     @State private var selection: String? = nil
@@ -74,7 +75,7 @@ struct SessionsPage: View {
                         BulkModelSheet(store: store, list: target.map(store.shown)) { bulk = false }.background(PageBackground())
                     }
                 let pausable = target.filter(\.canPause)
-                Button { askPause = true } label: { Label((some ? "暂停 " : "全部暂停 ") + "\(pausable.count)", systemImage: "pause.fill") }
+                Button { askPause = true } label: { Label(some ? L("暂停 \(pausable.count)") : L("全部暂停 \(pausable.count)"), systemImage: "pause.fill") }
                     .glassButton().controlSize(.small).disabled(pausable.isEmpty)
                     .help("停下正在跑的这一轮（同 ChatGPT 里的停止）；排在续答队列里的移出队列")
                     .alert("暂停 \(pausable.count) 个对话？", isPresented: $askPause) {
@@ -82,20 +83,21 @@ struct SessionsPage: View {
                         Button("取消", role: .cancel) {}
                     } message: {
                         Text(pausable.prefix(6).map { "· " + $0.displayTitle }.joined(separator: "\n")
-                             + (pausable.count > 6 ? "\n… 等 \(pausable.count) 个" : "")
-                             + "\n\n正在跑的这一轮会停下，之后可以点「继续」接着做。")
+                             + (pausable.count > 6 ? L("\n… 等 \(pausable.count) 个") : "")
+                             + L("\n\n正在跑的这一轮会停下，之后可以点「继续」接着做。"))
                     }
                 let all = target.filter(\.canContinue)
-                Button { askAll = true } label: { Label((some ? "继续 " : "全部继续 ") + "\(all.count)", systemImage: "play.fill") }
+                Button { askAll = true } label: { Label(some ? L("继续 \(all.count)") : L("全部继续 \(all.count)"), systemImage: "play.fill") }
                     .glassProminentButton().controlSize(.small).disabled(all.isEmpty)
-                    .help("在\(some ? "勾选的" : "列表里所有")没在跑的对话里发「\(store.config.prompt)」，后台进行，不切到 ChatGPT")
+                    .help(some ? L("在勾选的没在跑的对话里发「\(store.config.prompt)」，后台进行，不切到 ChatGPT")
+                          : L("在列表里所有没在跑的对话里发「\(store.config.prompt)」，后台进行，不切到 ChatGPT"))
                     .alert("在 \(all.count) 个对话里发「\(store.config.prompt)」？", isPresented: $askAll) {
                         Button("继续") { store.continueNow(all); checked.removeAll() }
                         Button("取消", role: .cancel) {}
                     } message: {
                         Text(all.prefix(6).map { "· " + $0.displayTitle }.joined(separator: "\n")
-                             + (all.count > 6 ? "\n… 等 \(all.count) 个" : "")
-                             + "\n\n后台排进 ChatGPT 的待发队列，不会切到 ChatGPT；每个对话会用掉当前账号的额度。")
+                             + (all.count > 6 ? L("\n… 等 \(all.count) 个") : "")
+                             + L("\n\n后台排进 ChatGPT 的待发队列，不会切到 ChatGPT；每个对话会用掉当前账号的额度。"))
                     }
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
@@ -110,7 +112,7 @@ struct SessionsPage: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 5) {
                             Text(r.title).font(.system(size: 14, weight: r.s.isActive ? .semibold : .regular)).lineLimit(1)
-                            if r.s.queued { Pill(text: "排队续答", color: Palette.accent) }
+                            if r.s.queued { Pill(text: L("排队续答"), color: Palette.accent) }
                         }
                         Text(r.s.error.isEmpty ? r.s.thread.prefix(8) + " · " + (r.s.cwd.isEmpty ? "—" : r.s.cwd) : r.s.shortError)
                             .font(.caption).foregroundStyle(r.s.error.isEmpty ? Palette.text3 : Palette.red).lineLimit(1)
@@ -118,8 +120,8 @@ struct SessionsPage: View {
                     }
                     .padding(.vertical, 6)
                 }
-                .width(min: 240, ideal: 340)
-                TableColumn("账号", value: \.account) { r in
+                .width(min: 200, ideal: AppLanguage.active == "en" ? 215 : 276)   // 十列加列间距要放进全屏宽度（约 1260），这列最能让
+                TableColumn(L("账号#列", zh: "账号"), value: \.account) { r in
                     if let slot = r.s.slot, !slot.isEmpty {
                         HStack(spacing: 7) {
                             Avatar(letter: slot, size: 24)
@@ -132,19 +134,19 @@ struct SessionsPage: View {
                         Text("—").foregroundStyle(.tertiary)
                     }
                 }
-                .width(min: 110, ideal: 140)
+                .width(min: 100, ideal: AppLanguage.active == "en" ? 112 : 125)
                 TableColumn("项目", value: \.project) { r in Text(r.project.isEmpty ? "—" : r.project).help(r.s.cwd) }
-                    .width(min: 90, ideal: 130)
+                    .width(min: 80, ideal: AppLanguage.active == "en" ? 96 : 105)
                 TableColumn("状态", value: \.rank) { r in let (t, c) = SessionLook.of(r.s.status); StatusChip(text: t, color: c) }
-                    .width(min: 80, ideal: 100)
+                    .width(min: 80, ideal: AppLanguage.active == "en" ? 112 : 100)   // 英文状态更长
                 TableColumn("模型") { r in ModelMenu(store: store, s: r.s) }
-                    .width(min: 120, ideal: 150)
+                    .width(min: AppLanguage.active == "en" ? 175 : 135, ideal: AppLanguage.active == "en" ? 185 : 160)   // 英文「Extra high」更长
                 TableColumn("子任务", value: \.subagents) { r in Text(r.subagents > 0 ? "\(r.subagents)" : "—").monospacedDigit() }
-                    .width(min: 44, ideal: 54)
+                    .width(min: AppLanguage.active == "en" ? 72 : 44, ideal: AppLanguage.active == "en" ? 74 : 54)     // 英文表头「Subagents」更宽
                 TableColumn("已运行", value: \.runFor) { r in Text(r.runFor >= 0 ? TimeText.span(r.runFor) : "—").monospacedDigit() }
-                    .width(min: 70, ideal: 90)
+                    .width(min: AppLanguage.active == "en" ? 84 : 70, ideal: AppLanguage.active == "en" ? 86 : 80)    // 英文「Running For」
                 TableColumn("最后活动", value: \.last) { r in Text(TimeText.ago(r.last, now: store.now)).foregroundStyle(.secondary) }
-                    .width(min: 70, ideal: 90)
+                    .width(min: AppLanguage.active == "en" ? 110 : 70, ideal: AppLanguage.active == "en" ? 112 : 86)  // 英文「Last Activity」+ 排序箭头
                 TableColumn("") { r in
                     if r.s.isActive {
                         Button("暂停") { store.pauseNow([r.s]) }
@@ -153,11 +155,11 @@ struct SessionsPage: View {
                     } else if r.s.canContinue {
                         Button(r.s.queued ? "立即继续" : "继续") { store.continueNow([r.s]) }
                             .glassButton().controlSize(.small)
-                            .help("后台在这个对话里发「\(store.config.prompt)」，不切到 ChatGPT"
-                                  + (r.s.queued ? "；它已在续答队列里，点了会提到最前面马上处理" : ""))
+                            .help(r.s.queued ? L("后台在这个对话里发「\(store.config.prompt)」，不切到 ChatGPT；它已在续答队列里，点了会提到最前面马上处理")
+                                             : L("后台在这个对话里发「\(store.config.prompt)」，不切到 ChatGPT"))
                     }
                 }
-                .width(min: 72, ideal: 84)
+                .width(min: 72, ideal: 76)
             }
             .font(.system(size: 13.5))
             .alternatingRowBackgrounds(.disabled)   // 不要斑马纹：和概览、设置一样透出页面底色
@@ -185,7 +187,7 @@ struct SessionsPage: View {
         }
         .navigationTitle("会话")
         .navigationSubtitle("\(store.activeSessions.count) 个进行中 · 当前账号 \(store.current.map { "\($0.slot) · \($0.email)" } ?? "—") · 双击在 ChatGPT 中打开")
-        .pageToolbar(search: $query, prompt: "搜索标题 / 项目") {
+        .pageToolbar(search: $query, prompt: L("搜索标题 / 项目")) {
             Button { store.reloadSessions() } label: { Label("刷新", systemImage: "arrow.clockwise") }
         }
         .onAppear { store.loadModels() }
@@ -193,10 +195,14 @@ struct SessionsPage: View {
             // （参数后面不能跟数字：跟了窗口就不出来）
             let args = CommandLine.arguments
             if args.contains("--sessions-all") { filter = "all" }
-            if args.contains("--demo-check") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { checked = Set(rows.prefix(3).map(\.id)) }
-            }
-            if args.contains("--show-bulk") { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { bulk = true } }
+        }
+        // 对话列表到了再勾、再弹（启动时列表要等一会儿才读出来）
+        .onChange(of: rows.count, initial: true) { _, n in
+            let args = CommandLine.arguments
+            guard !demoDone, n >= 3, args.contains("--demo-check") || args.contains("--show-bulk") else { return }
+            demoDone = true
+            if args.contains("--demo-check") { checked = Set(rows.prefix(3).map(\.id)) }
+            if args.contains("--show-bulk") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { bulk = true } }
         }
         .onAppear { if let f = store.focus, store.sessions.contains(where: { $0.thread == f }) { selection = f; filter = "all"; store.focus = nil } }
     }
@@ -220,8 +226,8 @@ struct SessionLine: View {
             Circle().fill(color).frame(width: 7, height: 7)
             VStack(alignment: .leading, spacing: 2) {
                 Text(s.displayTitle).font(.callout.weight(.medium)).lineLimit(1)
-                Text([(s.slot ?? "").isEmpty ? "" : "账号 \(s.slot!)", s.project, s.subagents > 0 ? "\(s.subagents) 个子任务" : "",
-                      s.isActive && s.turnStartedAt > 0 ? "已运行 " + TimeText.span(now - s.turnStartedAt)
+                Text([(s.slot ?? "").isEmpty ? "" : L("账号 \(s.slot!)"), s.project, s.subagents > 0 ? L("\(s.subagents) 个子任务") : "",
+                      s.isActive && s.turnStartedAt > 0 ? L("已运行 \(TimeText.span(now - s.turnStartedAt))")
                                                         : TimeText.ago(s.lastActivity, now: now)]
                         .filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -240,6 +246,9 @@ struct ModelMenu: View {
     var body: some View {
         let v = store.shown(s)
         let cur = store.models.first { $0.id == v.model }
+        // ⚡ 单独占一格、没有快速档时留空：各行的模型名竖向对齐
+        HStack(spacing: 3) {
+        Text(verbatim: "⚡").font(.caption).opacity(v.fast ? 1 : 0).frame(width: 12)
         Menu {
             Picker("模型", selection: Binding(get: { v.model ?? "" }, set: { id in
                 if let m = store.models.first(where: { $0.id == id }) { store.setThreads([s], model: id, effort: fit(v.effort, m)) }
@@ -266,13 +275,13 @@ struct ModelMenu: View {
             Divider()
             Text("下一轮起生效；没在 ChatGPT 里打开的对话会在后台打开一下")
         } label: {
-            Text((v.fast ? "⚡ " : "") + store.modelName(v.model)
-                 + ((v.effort ?? "").isEmpty ? "" : " · " + ModelInfo.effortName(v.effort!)))
+            Text(store.modelName(v.model) + ((v.effort ?? "").isEmpty ? "" : " · " + ModelInfo.effortName(v.effort!)))
                 .lineLimit(1)
         }
         .menuStyle(.borderlessButton).menuIndicator(.visible).fixedSize()
         .disabled(store.models.isEmpty)
         .help("改这个对话的模型 / 推理强度 / 速度")
+        }
     }
 
     /// 换模型时推理强度沿用原来的；新模型不支持就用它的默认值
@@ -361,7 +370,7 @@ struct BulkModelSheet: View {
     /// 「不改」后面带上当前值：大家一样就显示这个值，不一样就写「各不相同」
     private func keep(_ values: [String]) -> String {
         let u = Set(values)
-        return "不改（" + (u.count == 1 ? u.first! : "各不相同") + "）"
+        return L("不改（\(u.count == 1 ? u.first! : L("各不相同"))）")
     }
 
     private func order(_ e: String) -> Int { ["low", "medium", "high", "xhigh", "max", "ultra"].firstIndex(of: e) ?? 9 }

@@ -36,9 +36,9 @@ struct OverviewPage: View {
         }
         .defaultScrollAnchor(.top)
         .navigationTitle("概览")
-        .navigationSubtitle((store.appRunning ? "ChatGPT 运行中" : "ChatGPT 未运行") + " · "
-                            + (store.syncing || store.refreshing ? "正在同步…"
-                               : store.directory.at > 0 ? "同步于 \(TimeText.ago(store.directory.at, now: store.now))，后台每 30 分钟自动同步" : "还没同步过"))
+        .navigationSubtitle((store.appRunning ? L("ChatGPT 运行中") : L("ChatGPT 未运行")) + " · "
+                            + (store.syncing || store.refreshing ? L("正在同步…")
+                               : store.directory.at > 0 ? L("同步于 \(TimeText.ago(store.directory.at, now: store.now))，后台每 30 分钟自动同步") : L("还没同步过")))
         .pageToolbar {
             Button { store.syncAll() } label: { Label("全部刷新", systemImage: "arrow.clockwise") }
                 .disabled(store.syncing || store.refreshing)
@@ -67,34 +67,34 @@ struct OverviewPage: View {
         let newMembers = store.teams.reduce(0) { $0 + $1.newMembers(now: now).count }
         let soon = store.upcomingRenewals(days: 7)
         let dues = store.duePayments(days: 3)
-        let credits = store.directory.people.flatMap(\.availableResets)
+        let credits = store.directory.allAvailableResets
         let firstExpiry = credits.map(\.expiresAt).filter { $0 > now }.min()
         func tile(_ t: MetricTile, _ action: @escaping () -> Void) -> AnyView {
             AnyView(Button(action: action) { t }.buttonStyle(CardButtonStyle()))
         }
         return [
-            tile(MetricTile(title: "可用账号", value: "\(usable)", unit: "/ \(store.slots.count)",
-                            detail: cur.map { "当前 \($0.slot) · \($0.email.components(separatedBy: "@")[0])" } ?? "当前账号不在列表里",
+            tile(MetricTile(title: L("可用账号"), value: "\(usable)", unit: "/ \(store.slots.count)",
+                            detail: cur.map { L("当前 \($0.slot) · \($0.email.components(separatedBy: "@")[0])") } ?? L("当前账号不在列表里"),
                             icon: "person.2.fill", tint: usable > 0 ? Palette.green : Palette.red)) { go(.accounts) },
-            tile(MetricTile(title: cur?.noFiveHour == true ? "当前本周剩余" : "当前 5 小时剩余", value: cur.map { "\(Int(max(0, $0.remaining5h(now)).rounded()))" } ?? "—", unit: "%",
-                            detail: cur.map { "本周 \(Int(max(0, $0.remainingWeek(now)).rounded()))% · \(resetText($0.usage.primary, now: now)) 重置" } ?? "",
+            tile(MetricTile(title: cur?.noFiveHour == true ? L("当前本周剩余") : L("当前 5 小时剩余"), value: cur.map { "\(Int(max(0, $0.remaining5h(now)).rounded()))" } ?? "—", unit: "%",
+                            detail: cur.map { L("本周 \(Int(max(0, $0.remainingWeek(now)).rounded()))% · \(resetText($0.usage.primary, now: now)) 重置") } ?? "",
                             icon: "gauge.with.dots.needle.67percent", tint: Palette.quota(cur?.remaining5h(now) ?? 0))) {
                 store.focus = cur?.slot; go(.accounts)
             },
-            tile(MetricTile(title: "团队", value: "\(store.teams.count)", unit: "个",
-                            detail: "\(members) 名成员" + (newMembers > 0 ? " · 新增 \(newMembers)" : ""),
+            tile(MetricTile(title: L("团队"), value: "\(store.teams.count)", unit: L("个"),
+                            detail: L("\(members) 名成员") + (newMembers > 0 ? L(" · 新增 \(newMembers)") : ""),
                             icon: "building.2.fill", tint: Palette.purple)) { go(.teams) },
-            tile(MetricTile(title: "7 天内续费", value: "\(soon.count)", unit: "个",
-                            detail: soon.first.map { "\($0.displayName) \(TimeText.date($0.sub.nextDate).dropFirst(5))" } ?? "近期没有",
+            tile(MetricTile(title: L("7 天内续费"), value: "\(soon.count)", unit: L("个"),
+                            detail: soon.first.map { "\($0.displayName) \(TimeText.date($0.sub.nextDate).dropFirst(5))" } ?? L("近期没有"),
                             icon: "creditcard.fill", tint: soon.contains { $0.sub.nextDate - now <= 3 * 86400 } ? Palette.orange : Palette.indigo)) {
                 if let f = soon.first { store.focus = f.id }
                 go(.teams)
             },
-            tile(MetricTile(title: "待交费", value: "\(dues.count)", unit: "人",
-                            detail: dues.first.map { "\($0.wechat.isEmpty ? $0.email.components(separatedBy: "@")[0] : $0.wechat) \(TimeText.date($0.nextPay).dropFirst(5))" } ?? "近期没有",
+            tile(MetricTile(title: L("待交费"), value: "\(dues.count)", unit: L("人"),
+                            detail: dues.first.map { "\($0.wechat.isEmpty ? $0.email.components(separatedBy: "@")[0] : $0.wechat) \(TimeText.date($0.nextPay).dropFirst(5))" } ?? L("近期没有"),
                             icon: "yensign.circle.fill", tint: dues.isEmpty ? Palette.gray : Palette.orange)) { go(.members) },
-            tile(MetricTile(title: "额度重置券", value: "\(credits.count)", unit: "张",
-                            detail: firstExpiry.map { "最早 \(TimeText.short($0)) 过期 · 点击使用" } ?? "",
+            tile(MetricTile(title: L("额度重置券"), value: "\(credits.count)", unit: L("张"),
+                            detail: firstExpiry.map { L("最早 \(TimeText.short($0)) 过期 · 点击使用") } ?? "",
                             icon: "arrow.counterclockwise.circle.fill", tint: Palette.teal)) { store.showResets = true },
         ]
     }
@@ -102,18 +102,19 @@ struct OverviewPage: View {
     // MARK: 额度图
 
     private struct QuotaPoint: Identifiable {
-        let slot: String; let window: String; let left: Double
+        let slot: String; let five: Bool; let left: Double   // five：5 小时窗口（否则是本周）；不用显示文字做判断
+        var window: String { five ? L("5 小时") : L("本周") }
         var id: String { slot + window }
     }
 
     private var quotaChart: some View {
         let pts = store.slots.flatMap { s -> [QuotaPoint] in
-            [QuotaPoint(slot: s.slot, window: "5 小时", left: max(0, s.remaining5h(store.now))),
-             QuotaPoint(slot: s.slot, window: "本周", left: max(0, s.remainingWeek(store.now)))]
+            [QuotaPoint(slot: s.slot, five: true, left: max(0, s.remaining5h(store.now))),
+             QuotaPoint(slot: s.slot, five: false, left: max(0, s.remainingWeek(store.now)))]
         }
         return Card {
             VStack(alignment: .leading, spacing: 12) {
-                SectionTitle(title: "各账号剩余额度", icon: "chart.bar.xaxis") {
+                SectionTitle(title: L("各账号剩余额度"), icon: "chart.bar.xaxis") {
                     Button("账号管理") { go(.accounts) }.buttonStyle(.link)
                 }
                 Chart {
@@ -129,11 +130,11 @@ struct OverviewPage: View {
                             .annotation(position: .top, spacing: 3) {
                                 Text("\(Int(p.left.rounded()))")
                                     .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                                    .foregroundStyle(p.window == "5 小时" ? Palette.accent : Palette.teal)
+                                    .foregroundStyle(p.five ? Palette.accent : Palette.teal)
                             }
                     }
                 }
-                .chartForegroundStyleScale(["5 小时": Palette.accent, "本周": Palette.teal])
+                .chartForegroundStyleScale([L("5 小时"): Palette.accent, L("本周"): Palette.teal])
                 // 横轴固定按槽位排：悬停底色画在柱子前面，不固定的话被悬停的账号会被挪到第一位
                 .chartXScale(domain: store.slots.map(\.slot))
                 .chartYScale(domain: 0...112)          // 顶上留出放数字的空间，刻度仍只到 100%
@@ -146,8 +147,8 @@ struct OverviewPage: View {
                 .chartOverlay { proxy in hoverLayer(proxy) }
                 .frame(maxHeight: .infinity)
                 if let cur = store.current {
-                    Text("当前账号 \(cur.slot) · 5 小时额度从第一次使用开始滚动计时，没用过的账号显示 100%"
-                         + (store.slots.count > Self.chartVisible ? " · 左右滑动看其余账号" : ""))
+                    Text(L("当前账号 \(cur.slot) · 5 小时额度从第一次使用开始滚动计时，没用过的账号显示 100%")
+                         + (store.slots.count > Self.chartVisible ? L(" · 左右滑动看其余账号") : ""))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -191,13 +192,13 @@ struct OverviewPage: View {
 
     private var renewals: some View {
         let list = store.upcomingRenewals(days: 31)
-        return ListCard(title: "续费 / 到期时间线（30 天）", icon: "calendar",
-                        empty: list.isEmpty ? (store.directory.at == 0 ? "还没同步过订阅信息" : "30 天内没有续费或到期") : nil) {
+        return ListCard(title: L("续费 / 到期时间线（30 天）"), icon: "calendar",
+                        empty: list.isEmpty ? (store.directory.at == 0 ? L("还没同步过订阅信息") : L("30 天内没有续费或到期")) : nil) {
             Button("团队") { go(.teams) }.buttonStyle(.link)
         } rows: {
             ForEach(list) { w in
                 let d = TimeText.daysLeft(w.sub.nextDate, now: store.now)
-                let stop = w.sub.nextLabel == "到期"
+                let stop = w.sub.active && !(w.sub.willRenew && w.sub.cancelsAt == 0)   // 即 nextLabel 是「到期」；不比较文字，英文界面下也对
                 HStack(spacing: 10) {
                     VStack(spacing: 0) {
                         Text(TimeText.date(w.sub.nextDate).dropFirst(5)).font(.callout.weight(.semibold).monospacedDigit())
@@ -207,12 +208,12 @@ struct OverviewPage: View {
                     Rectangle().fill(d <= 3 ? Palette.orange : Palette.line).frame(width: 2, height: 30)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(w.displayName).font(.callout.weight(.medium)).lineLimit(1)
-                        Text([w.planName, w.sub.billingText, w.sub.seatsTotal > 0 ? "\(w.sub.seatsUsed)/\(w.sub.seatsTotal) 席" : ""]
+                        Text([w.planName, w.sub.billingText, w.sub.seatsTotal > 0 ? L("\(w.sub.seatsUsed)/\(w.sub.seatsTotal) 席") : ""]
                             .filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Pill(text: stop ? "到期" : "自动续费", color: stop ? Palette.red : Palette.green)
+                    Pill(text: stop ? L("到期") : L("自动续费"), color: stop ? Palette.red : Palette.green)
                     Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                 }
                 .hoverRow { store.focus = w.id; go(.teams) }
@@ -224,8 +225,8 @@ struct OverviewPage: View {
 
     private var duesCard: some View {
         let list = store.duePayments(days: 7)
-        return ListCard(title: "待交费的成员（\(list.count)）", icon: "yensign.circle",
-                        empty: list.isEmpty ? "7 天内没有人要交费，也没有逾期的" : nil) {
+        return ListCard(title: L("待交费的成员（\(list.count)）"), icon: "yensign.circle",
+                        empty: list.isEmpty ? L("7 天内没有人要交费，也没有逾期的") : nil) {
             Button("成员台账") { go(.members) }.buttonStyle(.link)
         } rows: {
             ForEach(list) { r in
@@ -248,8 +249,8 @@ struct OverviewPage: View {
     private var sessionsCard: some View {
         let list = store.activeSessions
         let shown = list.isEmpty ? Array(store.sessions.prefix(20)) : list
-        return ListCard(title: list.isEmpty ? "最近的对话" : "进行中的对话（\(list.count)）", icon: "bubble.left.and.bubble.right",
-                        empty: shown.isEmpty ? "48 小时内没有对话" : nil) {
+        return ListCard(title: list.isEmpty ? L("最近的对话") : L("进行中的对话（\(list.count)）"), icon: "bubble.left.and.bubble.right",
+                        empty: shown.isEmpty ? L("48 小时内没有对话") : nil) {
             Button("全部") { go(.sessions) }.buttonStyle(.link)
         } rows: {
             ForEach(shown) { s in
@@ -261,7 +262,7 @@ struct OverviewPage: View {
     // MARK: 消息 / 日志
 
     private var noticesCard: some View {
-        ListCard(title: "最新消息", icon: "bell", empty: store.notices.isEmpty ? "暂无消息" : nil) {
+        ListCard(title: L("最新消息"), icon: "bell", empty: store.notices.isEmpty ? L("暂无消息") : nil) {
             Button("全部消息") { go(.messages) }.buttonStyle(.link)
         } rows: {
             ForEach(store.notices.prefix(30)) { n in
@@ -291,15 +292,15 @@ private struct QuotaTip: View {
                 Avatar(letter: s.slot, size: 24)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(s.email).font(.callout.weight(.semibold)).lineLimit(1).truncationMode(.middle)
-                    Text([ws.map { $0.isTeam ? $0.displayName : "个人空间" } ?? s.title, s.planLabel, s.name,
-                          (s.wechat ?? "").isEmpty ? "" : "微信 \(s.wechat!)"]
+                    Text([ws.map { $0.isTeam ? $0.displayName : L("个人空间") } ?? s.title, s.planLabel, s.name,
+                          (s.wechat ?? "").isEmpty ? "" : L("微信 \(s.wechat!)")]
                             .filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             Divider()
-            if !s.noFiveHour { row("5 小时", s.usage.primary, color: Palette.accent) }   // 只有每周额度的套餐不显示 5 小时
-            row("本周", s.usage.secondary, color: Palette.teal)
+            if !s.noFiveHour { row(L("5 小时"), s.usage.primary, color: Palette.accent) }   // 只有每周额度的套餐不显示 5 小时
+            row(L("本周"), s.usage.secondary, color: Palette.teal)
             Text(status).font(.caption.weight(.medium)).foregroundStyle(statusColor)
         }
         .padding(12)
@@ -313,16 +314,16 @@ private struct QuotaTip: View {
             Text(title).foregroundStyle(.secondary)
             Spacer()
             Text(w.map { "剩 \(Int(max(0, $0.remaining(now: now)).rounded()))%" } ?? "—").monospacedDigit()
-            Text(resetText(w, now: now)).foregroundStyle(.secondary).monospacedDigit().frame(width: 74, alignment: .trailing)
+            Text(resetText(w, now: now)).foregroundStyle(.secondary).monospacedDigit().frame(width: AppLanguage.active == "en" ? 100 : 74, alignment: .trailing)   // 英文「Tomorrow 18:52」更长
         }
         .font(.caption)
     }
 
     private var status: String {
-        if s.needsLogin { return "需要重新登录" }
-        if s.current { return "正在使用 · 点击查看详情" }
-        if let t = s.exhaustedUntil(now) { return "额度用完 · \(TimeText.short(t)) 恢复" }
-        return s.usable(now) ? "可用 · 点击查看详情" : "额度未知 · 点击查看详情"
+        if s.needsLogin { return L("需要重新登录") }
+        if s.current { return L("正在使用 · 点击查看详情") }
+        if let t = s.exhaustedUntil(now) { return L("额度用完 · \(TimeText.short(t)) 恢复") }
+        return s.usable(now) ? L("可用 · 点击查看详情") : L("额度未知 · 点击查看详情")
     }
     private var statusColor: Color {
         if s.needsLogin || s.exhaustedUntil(now) != nil { return Palette.red }
@@ -391,22 +392,22 @@ struct AutoCard: View {
                 }
                 Divider()
                 if let c = store.current {
-                    account(c, role: "当前账号", tint: Palette.green)
+                    account(c, role: L("当前账号"), tint: Palette.green)
                 } else {
-                    roleTag("当前账号", Palette.green)
+                    roleTag(L("当前账号"), Palette.green)
                     Text("当前登录的账号不在列表里").foregroundStyle(.secondary)
                 }
                 Divider()
                 if let n = store.nextSlot() {
-                    account(n, role: "下一个", tint: Palette.accent)
+                    account(n, role: L("下一个"), tint: Palette.accent)
                 } else {
-                    roleTag("下一个", Palette.accent)
+                    roleTag(L("下一个"), Palette.accent)
                     Text("没有可用账号，等最早恢复的").foregroundStyle(Palette.orange)
                 }
                 // 切号顺序、续答用语等设置只在设置页显示，这里只放账号
                 if a.queue > 0 {
                     Divider()
-                    LabeledContent("待续答", value: "\(a.queue) 个对话")
+                    LabeledContent("待续答", value: L("\(a.queue) 个对话"))
                 }
             }
             .font(.callout)
@@ -424,15 +425,15 @@ struct AutoCard: View {
                     .overlay { Circle().strokeBorder(tint, lineWidth: 2).padding(-3) }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(c.email).fontWeight(.semibold).lineLimit(1).truncationMode(.middle)
-                    Text(["槽 \(c.slot)", store.workspace(of: c).map { $0.isTeam ? $0.displayName : "个人空间" } ?? c.title, c.planLabel]
+                    Text([L("槽 \(c.slot)"), store.workspace(of: c).map { $0.isTeam ? $0.displayName : L("个人空间") } ?? c.title, c.planLabel]
                             .filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
             }
-            if !c.noFiveHour { quotaLine("5 小时", c.usage.primary) }
-            quotaLine("本周", c.usage.secondary)
+            if !c.noFiveHour { quotaLine(L("5 小时"), c.usage.primary) }
+            quotaLine(L("本周"), c.usage.secondary)
         }
         .contentShape(Rectangle())
         .onTapGesture { store.focus = c.slot; go(.accounts) }
@@ -449,26 +450,28 @@ struct AutoCard: View {
     private func quotaLine(_ title: String, _ w: UsageWindow?) -> some View {
         let left = w.map { max(0, $0.remaining(now: store.now)) }
         return HStack(spacing: 8) {
-            Text(title).foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
+            Text(title).foregroundStyle(.secondary).frame(width: AppLanguage.active == "en" ? 64 : 40, alignment: .leading)   // 英文「This week」更宽
             QuotaBar(value: left ?? 0, height: 6)
             Text(left.map { "\(Int($0.rounded()))%" } ?? "—")
                 .fontWeight(.semibold).monospacedDigit().foregroundStyle(left.map(Palette.quota) ?? Palette.text3)
                 .frame(width: 38, alignment: .trailing)
             Text(resetLabel(w)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                .frame(width: 92, alignment: .trailing)
+                .frame(width: AppLanguage.active == "en" ? 116 : 92, alignment: .trailing)   // 英文「Resets Tomorrow 18:52」更长
         }
     }
 
     private func resetLabel(_ w: UsageWindow?) -> String {
         let t = resetText(w, now: store.now)
-        return t == "—" || t == "已重置" || t == "未使用" ? t : t + " 重置"
+        // resetText 返回「—」「已重置」「未使用」这三种时不加「重置」；按原始字段判断，不比较文字（和 resetText 的分支一致）
+        guard let w, w.resetAt > 0, w.resetAt > store.now, !w.untouched else { return t }
+        return L("\(t) 重置")
     }
 
     static func text(_ a: AutoStatus, prompt: String) -> String {
-        if !a.enabled { return "已关闭：额度用完时不会自动换号，也不会自动续答" }
-        if !a.alive { return "后台服务没有运行，自动切号暂时不会生效" }
+        if !a.enabled { return L("已关闭：额度用完时不会自动换号，也不会自动续答") }
+        if !a.alive { return L("后台服务没有运行，自动切号暂时不会生效") }
         if a.phase == "idle" || a.text.isEmpty {
-            return "监控中：当前账号额度用完会切到下一个可用账号，并在中断的对话里发「\(prompt)」"
+            return L("监控中：当前账号额度用完会切到下一个可用账号，并在中断的对话里发「\(prompt)」")
         }
         return a.text
     }

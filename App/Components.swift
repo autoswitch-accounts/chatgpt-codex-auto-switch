@@ -309,8 +309,8 @@ struct QuotaCell: View {
 /// 额度重置时刻：没用过的窗口不显示具体时刻（服务端给的是「现在 + 窗口长度」，每次都会往后挪）
 func resetText(_ w: UsageWindow?, now: Double) -> String {
     guard let w, w.resetAt > 0 else { return "—" }
-    if w.resetAt <= now { return "已重置" }
-    if w.untouched { return "未使用" }
+    if w.resetAt <= now { return L("已重置") }
+    if w.untouched { return L("未使用") }
     return TimeText.short(w.resetAt)
 }
 
@@ -340,9 +340,9 @@ struct BigQuota: View {
     }
     private func detail(_ w: UsageWindow) -> String {
         if w.resetAt <= 0 { return " " }
-        if w.resetAt <= now { return "已重置" }
-        if w.untouched { return "还没用过 · 从第一次使用开始计时" }
-        return "\(TimeText.short(w.resetAt)) 重置 · \(TimeText.until(w.resetAt, now: now))"
+        if w.resetAt <= now { return L("已重置") }
+        if w.untouched { return L("还没用过 · 从第一次使用开始计时") }
+        return L("\(TimeText.short(w.resetAt)) 重置 · \(TimeText.until(w.resetAt, now: now))")
     }
 }
 
@@ -371,7 +371,7 @@ struct InfoRow<V: View>: View {
     @ViewBuilder var value: V
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(key).foregroundStyle(.secondary).frame(width: 78, alignment: .leading)
+            Text(key).foregroundStyle(.secondary).frame(width: AppLanguage.active == "en" ? 96 : 78, alignment: .leading)   // 英文键更长
             value.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
         }
         .font(.callout)

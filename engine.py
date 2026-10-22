@@ -9,7 +9,7 @@
   --slot X [--force]         切到槽位 X
   --refresh-usage [X ...]    联网刷新额度，不带槽位就刷新全部
   --set-auto on|off          自动切号开关
-  --set-config 键 JSON值      改设置（enabled / prompt / stall_nudge / order / auto_start / auto_continue / continue_max / quiet_switch）
+  --set-config 键 JSON值      改设置（enabled / prompt / stall_nudge / order / auto_start / auto_continue / continue_max / quiet_switch / skip / lang）
   --resume 对话id ...        请守护进程在这些对话里发一句「继续」（打开对话）
   --continue 对话id ...      同上，但在后台跑：排进 ChatGPT 的待发队列再唤醒，不切到 ChatGPT
   --pause 对话id ...         停下这些对话正在跑的这一轮（守护进程经总线停），并移出续答队列
@@ -17,6 +17,7 @@
   --directory-json [--refresh]  空间、订阅（续费 / 到期 / 席位）、成员、重置券（全部走接口）
   --hide-team / --unhide-team 空间id  团队页里移除 / 恢复一个空间（只改本机显示）
   --notices-json             消息中心
+  --phrases-json             中英对照表（App 把旧消息、旧日志换成当前语言用）
   --notice-read [id ...]     标为已读（不带 id 就是全部）
   --ensure-daemon            安装 / 更新并启动守护进程（launchd）
   --rename X 名字 / --delete X
@@ -28,7 +29,7 @@
   添加账号流程：--next-slot / --auto-begin X / --current-json / --capture / --relaunch X
 """
 import os, sys, json, base64, shutil, subprocess, time, datetime, fcntl, contextlib
-import re, uuid, bisect, calendar, select, threading
+import re, uuid, bisect, calendar, select, threading, importlib.util
 import urllib.request, urllib.error
 
 # ---------- 路径常量 ----------
@@ -96,6 +97,213 @@ def write_json(path, data):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+# ---------- 界面语言 ----------
+# 日志、通知、状态、报错这些给人看的话：中文原文当键，英文译文在 EN 表里（autoswitch.py 往里补它自己的）。
+# 用 t("已切到槽 {slot}", slot=x)：带参数时按 str.format 填，所以原文里的花括号要写成 {{ }}。
+# 语言是 autoswitch.json 的 lang（"zh" / "en"），App 每次启动按自己的界面语言写进去；已经写下的日志和消息不改
+EN = {
+    # 凭证刷新
+    "读取失败": "read failed",
+    "没有 refresh_token，需重新登录": "no refresh_token, needs sign-in",
+    "仍有效（剩 {left:.0f} 分钟），跳过": "still valid ({left:.0f} min left), skipped",
+    "网络错误 {name}": "Network error {name}",
+    "响应缺 id_token": "response missing id_token",
+    "已刷新": "refreshed",
+    "刷新失败（{last}），需要重新登录": "refresh failed ({last}), needs sign-in",
+    # 切号
+    "槽位 {slot} 不存在或凭证损坏，建议删掉重新添加": "Slot {slot} is missing or its credentials are corrupted; delete it and add it again",
+    "ChatGPT 没能退出，请手动 Cmd+Q 后重试": "ChatGPT didn't quit. Press Cmd+Q and try again",
+    "槽 {slot} 凭证刷新：{msg}": "Slot {slot} credentials refresh: {msg}",
+    "切换 {a} → {b} (槽 {slot} / {acct})": "Switched {a} → {b} (slot {slot} / {acct})",
+    "无": "none",
+    "切号历史：从 manager.log 回填 {n} 条": "Switch history: backfilled {n} entries from manager.log",
+    "切号历史写入失败 {name}: {e}": "Failed to write switch history {name}: {e}",
+    # 额度
+    "凭证过期，切到这个账号一次即可刷新": "Credentials expired. Switch to this account once to refresh them",
+    "演示模式不联网": "Demo mode is offline",
+    "查询失败 HTTP {code}": "Query failed HTTP {code}",
+    # 重置券
+    "{mail} 用券后刷新券列表失败 {err}，等下次同步": "{mail}: failed to reload reset credits after use ({err}), will retry on next sync",
+    "槽位 {slot} 不存在或凭证损坏": "Slot {slot} is missing or its credentials are corrupted",
+    "读取重置券失败 {e}": "Failed to read reset credits {e}",
+    "这个账号没有可用的重置券": "This account has no reset credits available",
+    "槽 {slot} 使用重置券失败 HTTP {code}": "Slot {slot}: failed to use reset credit, HTTP {code}",
+    "使用失败 HTTP {code}": "Failed to use it, HTTP {code}",
+    "槽 {slot} 使用重置券失败 {name}": "Slot {slot}: failed to use reset credit, {name}",
+    "槽 {slot} ({email}) 使用重置券 {credit}：{code}，重置了 {n} 个窗口":
+        "Slot {slot} ({email}) used reset credit {credit}: {code}, windows reset: {n}",
+    "无返回码": "no code",
+    "没有重置（服务端返回 {code}）": "Not reset (server returned {code})",
+    "空": "empty",
+    "{email} 用了一张额度重置券": "{email} used a reset credit",
+    "{email} 的这张重置券之前已用过": "{email}: this reset credit was already used",
+    "槽 {slot} · 5 小时额度已用 {used:g}%": "Slot {slot} · 5-hour limit {used:g}% used",
+    "槽 {slot}": "Slot {slot}",
+    # 开始计时
+    "流提前结束，没有 response.completed": "Stream ended early without response.completed",
+    "没有可用的模型": "No usable model",
+    "槽 {slot} ({email}) 起算 5 小时窗口：已发出请求（{model}）": "Slot {slot} ({email}) start the 5-hour timer: request sent ({model})",
+    "槽 {slot} ({email}) 起算 5 小时窗口：失败 {err}": "Slot {slot} ({email}) start the 5-hour timer: failed {err}",
+    # WebKit / 账号目录
+    "WebKit 取数据没起来：{err}": "WebKit fetcher didn't start: {err}",
+    "没有响应": "no response",
+    "WebKit 无响应": "WebKit not responding",
+    "WebKit 返回的不是 JSON": "WebKit returned non-JSON",
+    "被 Cloudflare 拦截（HTTP 403）": "Blocked by Cloudflare (HTTP 403)",
+    "每期减 {amount:g} {cur}": "{amount:g} {cur} off each period",
+    "每期减 {amount:g} {cur}，至 {date}": "{amount:g} {cur} off each period, until {date}",
+    "{mail}：空间列表 {err}": "{mail}: workspace list {err}",
+    "{mail}：订阅信息暂时拿不到，沿用上次": "{mail}: subscription info unavailable, using last sync",
+    "席位{e}，沿用上次": "Seats {e}, using last sync",
+    "成员列表{e}，沿用 {at} 的数据": "Member list {e}, using data from {at}",
+    "成员列表{e}，沿用上次的数据": "Member list {e}, using last sync",
+    "成员列表{e}，暂时拿不到": "Member list {e}, unavailable for now",
+    "同步账号目录失败（{err}），保留上次的数据": "Account directory sync failed ({err}), keeping the last data",
+    "没有账号": "no accounts",
+    "同步账号目录：{people} 个邮箱、{ws} 个空间，新消息 {new} 条":
+        "Synced account directory: emails {people}, workspaces {ws}, new messages {new}",
+    "，{errors} 个邮箱 / {partial} 个空间部分沿用上次数据": "; partly from last sync: emails {errors} / workspaces {partial}",
+    "（直连被 Cloudflare 拦，{n} 个请求改由 App 内置 WebKit 取到）":
+        " (Cloudflare blocked direct requests; {n} fetched via the App's built-in WebKit)",
+    # 成员台账
+    "交费日的键应为「空间id|邮箱」": "Due date key must be “workspaceId|email”",
+    "日期格式应为 YYYY-MM-DD": "Date must be YYYY-MM-DD",
+    "未知字段 {kind}": "Unknown field {kind}",
+    "缺少邮箱": "Missing email",
+    "成员台账 {kind} {key} → {value}": "Member ledger {kind} {key} → {value}",
+    "（删除）": "(deleted)",
+    "键应为「空间id|邮箱」": "Key must be “workspaceId|email”",
+    "目录里没有这个成员，先同步一次": "This member isn't in the directory. Sync first",
+    "算不出交费日": "Can't work out the due date",
+    "已经是第一期了": "Already at the first period",
+    "成员台账 {key} 撤销已交 → 已交到 {paid}": "Member ledger {key} undo paid → paid through {paid}",
+    "成员台账 {key} {due} 这期已交": "Member ledger {key} {due} marked paid",
+    # 消息中心
+    "个人空间 · {email}": "Personal workspace · {email}",
+    "{name} 将于 {day} 到期": "{name} expires {day}",
+    "已关闭自动续费，到期后这个空间的账号将无法使用": "Auto-renew is off. Accounts in this workspace stop working once it expires",
+    "{name} 将于 {day} 自动续费": "{name} renews {day}",
+    " · 席位 {used}/{total}": " · Seats {used}/{total}",
+    "{name} 扣费失败": "{name} payment failed",
+    "订阅处于欠费状态，请尽快更新付款方式": "Subscription is past due. Update the payment method soon",
+    "新成员加入 {name}": "New member joined {name}",
+    "{email}（{name}） · {day} 加入": "{email} ({name}) · joined {day}",
+    "{email} · {day} 加入": "{email} · joined {day}",
+    "成员离开 {name}": "Member left {name}",
+    "{email} · {day} 停用": "{email} · deactivated {day}",
+    "{name} 发出了新邀请": "{name} sent a new invite",
+    "{email} 尚未接受": "{email} hasn't accepted yet",
+    "槽 {slot}（{email}）有一张额度重置券 {day} 过期": "Slot {slot} ({email}) has a reset credit expiring {day}",
+    "读取 autoswitch.py 的译文失败：{err}": "Failed to read translations from autoswitch.py: {err}",
+    "{title}，过期作废": "{title}, void once expired",
+    "免费额度重置": "Free usage reset",
+    "未知": "unknown",
+    "{who} {due} 的费用已逾期 {days} 天": "{who}: payment due {due} is overdue ({days} d)",
+    "{who} {due} 该交费了": "{who}: payment due {due}",
+    "{name} · 所有者 {owner} · {joined} 加入": "{name} · Owner {owner} · joined {joined}",
+    "（交费日手动设置）": " (due date set manually)",
+    "还有 {n} 条新消息": "{n} more new messages",
+    "打开「ChatGPT 账号」的消息中心查看": "Open ChatGPT Accounts to see them in Messages",
+    "ChatGPT 账号": "ChatGPT Accounts",
+    # 设置 / 后台服务
+    "不支持的设置：{key}={value!r}": "Unsupported setting: {key}={value!r}",
+    "续答用语不能为空": "Resume prompt can't be empty",
+    "切号顺序只能是 alpha、most 或 soon": "Switch order must be alpha, most or soon",
+    "自动继续次数上限要在 1 到 50 之间": "Auto-continue limit must be between 1 and 50",
+    "lang 只能是 zh 或 en": "lang must be zh or en",
+    "skip 要是槽位名列表": "skip must be a list of slot names",
+    "设置 {key} = {value}": "Set {key} = {value}",
+    "launchctl 返回 {code}": "launchctl returned {code}",
+    "守护进程已（重新）安装": "Background service (re)installed",
+    # 命令行
+    "没有要暂停的对话": "No conversations to pause",
+    "参数格式不对": "Invalid arguments",
+    "没有要改的对话或设置": "No conversations or settings to change",
+    "添加：已退出并登出，用槽 {slot} 的 profile 开窗等待登录":
+        "Add: quit and signed out, opened a window with slot {slot}'s profile, waiting for sign-in",
+    "槽位已满": "All slots are full",
+    "添加完成（槽 {slot}），ChatGPT 已在运行": "Added (slot {slot}), ChatGPT already running",
+    "添加完成，后台拉起 ChatGPT（槽 {slot}）": "Added, launching ChatGPT in the background (slot {slot})",
+    "没读到凭证，可能还没登录成功": "No credentials found. Sign-in may not have finished",
+    "{email} 的这个 workspace 已在槽位 {dup}": "This workspace of {email} is already in slot {dup}",
+    "添加 {email} / {acct} → 槽 {slot}": "Added {email} / {acct} → slot {slot}",
+    "重命名槽 {slot} → {name}": "Renamed slot {slot} → {name}",
+    "不能删除当前正在使用的账号": "Can't delete the account currently in use",
+    "删除槽 {slot} ({email})": "Deleted slot {slot} ({email})",
+    "未知命令：{cmd}": "Unknown command: {cmd}",
+    "（空）": "(empty)",
+}
+
+
+# 旧版本写下的句子（现在已不这么写）：只给 --phrases-json 用，让以前的日志、消息换语言后也能看懂
+EN_OLD = {
+    "{email} 有一张额度重置券 {day} 过期": "{email} has a reset credit expiring {day}",
+    "，至 {date}": ", until {date}",
+    "槽 {slot} 凭证刷新：已刷新，新 id_token 有效 {n} 分钟": "Slot {slot} token refresh: refreshed, new id_token valid for {n} min",
+    "槽 {slot} 凭证刷新：刷新失败（HTTP {code}），可能需要重新登录": "Slot {slot} token refresh failed (HTTP {code}); may need to sign in again",
+    "已用深链唤醒 App 到线程 {id}": "Woke the app to thread {id} via deep link",
+    "续答第 {n} 次未成功（{err}），等 App 就绪后重试": "Resume attempt {n} didn't go through ({err}); retrying once the app is ready",
+    "还有 {n} 个对话在跑，等它们停下再切号（最多 {s} 秒）": "{n} conversations still running; waiting for them to stop before switching (up to {s} s)",
+    "冷却期内撞限（{why}），已暂存，冷却结束后处理": "Limit hit during cooldown ({why}); held until the cooldown ends",
+    "冷却结束，处理暂存的撞限（{why}）": "Cooldown over; handling the held limit hit ({why})",
+    "收到健康额度事件，暂存的撞限作废（迟到报错）": "Got a healthy usage event; dropped the held limit hit (late error)",
+    "{n} 小时额度已满": "{n}-hour limit reached",
+    "续答跳过（线程 {id}）：{why}": "Resume skipped (thread {id}): {why}",
+    "主线程尾部没有 usage_limit_exceeded 的失败轮次": "no usage_limit_exceeded failed turn at the end of the main thread",
+    "失败轮次之后已有新 turn 启动（可能已手动继续）": "a new turn started after the failed one (probably continued manually)",
+    "任务被中断（线程 {id}）": "Task interrupted (thread {id})",
+    "槽 {slot} 标为已耗尽（{why}），重置时间 {reset}，挡到 {until}": "Slot {slot} marked used up ({why}), resets {reset}, blocked until {until}",
+    "（估算）": " (estimated)",
+    "槽 {slot} 额度已恢复（{win} 已用 {pct}），解除耗尽标记": "Slot {slot} usage is back ({win} {pct} used); cleared the used-up mark",
+    "守护进程启动（v{v}）：{rest}": "Daemon started (v{v}): {rest}",
+    "守护进程启动：{rest}": "Daemon started: {rest}",
+    "ChatGPT 打开对话时跳到了最前面，已隐藏，回到原来的窗口": "ChatGPT jumped to the front when opening the conversation; hid it and returned to your window",
+    "检测到额度用完（{why}）：{email}（槽 {slot}）→ 槽 {to}": "Usage limit detected ({why}): {email} (slot {slot}) → slot {to}",
+    "engine.py --slot {slot} 返回码 {rc}：{out}": "engine.py --slot {slot} exit code {rc}: {out}",
+    "已切到槽 {slot}": "Switched to slot {slot}",
+    "任务停滞自动恢复：第 {n} 次干预（线程 {id}）": "Stalled task auto-recovery: intervention {n} (thread {id})",
+    "停滞干预：steer 未成功（{err}），改走开新轮次": "Stall intervention: steer failed ({err}); starting a new turn instead",
+    "停滞干预失败（线程 {id}）：{err}": "Stall intervention failed (thread {id}): {err}",
+    "任务疑似停滞：线程 {id} 已 {n} 分钟 无新进展": "Task may be stuck: thread {id} has made no progress for {n} min",
+    "续答成功：已请 App 在线程 {id} 里继续（新 turn {turn}）": "Resumed: asked the app to continue in thread {id} (new turn {turn})",
+    "续答进入延长重试：{rest}": "Resume moved to extended retries: {rest}",
+    "全部账号都未到重置时间，进入等待：最早 {at} 解挡，届时自动继续切号": "No account has reset yet; waiting. The earliest unblocks at {at}, then switching resumes",
+    "等待到点，自动恢复切号：{email}（槽 {slot}）→ 槽 {to}": "Wait over, switching resumes: {email} (slot {slot}) → slot {to}",
+    "会话页点了「暂停」：{ids}，{n} 个正在跑的去停下": "Pause clicked on the Sessions page: {ids}; stopping {n} running",
+    "切换 {old} → {new} (槽 {slot})": "Switch {old} → {new} (slot {slot})",
+    "激活已有窗口 {slot} ({email})": "Activated the existing window {slot} ({email})",
+    "为切换到 {slot} 自动退出了 {email}": "Signed out {email} automatically to switch to {slot}",
+    "切换到 {slot}（{email}）—— profile 模式，未改 auth.json": "Switched to {slot} ({email}) — profile mode, auth.json unchanged",
+    "添加账号被取消": "Adding an account was cancelled",
+    "自动登出 rc={rc} auth存在={ex}": "Auto sign-out rc={rc}, auth exists={ex}",
+    "已发起 codex login": "Started codex login",
+    "添加完成，拉起 ChatGPT（槽 {slot}）": "Added, launching ChatGPT (slot {slot})",
+    "自动切号关闭": "Auto-switch off",
+    "自动切号开启": "Auto-switch on",
+    "同步账号目录：{p} 个邮箱、{w} 个空间，新消息 {n} 条，{e} 个出错": "Synced account directory: {p} emails, {w} workspaces, {n} new messages, {e} errors",
+    "槽 {slot} ({email}) 起算 {n} 小时窗口：已发出请求": "Slot {slot} ({email}) started the {n}-hour window: request sent",
+}
+_lang_cache = ["", -1.0]       # [语言, autoswitch.json 的修改时间]
+
+
+def lang():
+    try:
+        m = os.stat(CONFIG).st_mtime
+    except OSError:
+        m = 0.0
+    if m != _lang_cache[1]:
+        c = read_json(CONFIG, {})
+        _lang_cache[:] = ["en" if isinstance(c, dict) and c.get("lang") == "en" else "zh", m]
+    return _lang_cache[0]
+
+
+def t(s, /, **kw):
+    """按界面语言取一句话；没有译文就用中文原文"""
+    if lang() == "en":
+        s = EN.get(s, s)
+    return s.format(**kw) if kw else s
 
 
 @contextlib.contextmanager
@@ -358,16 +566,16 @@ def refresh_slot(path):
     """
     data = read_json(path, None)
     if data is None:
-        return False, "读取失败"
+        return False, t("读取失败")
     tokens = data.get("tokens") or {}
     rt = tokens.get("refresh_token")
     if not rt:
-        return False, "没有 refresh_token，需重新登录"
+        return False, t("没有 refresh_token，需重新登录")
 
     exp = jwt_exp(tokens.get("id_token", ""))
     left = (exp - time.time()) / 60 if exp else -999
     if left > 5:
-        return True, f"仍有效（剩 {left:.0f} 分钟），跳过"
+        return True, t("仍有效（剩 {left:.0f} 分钟），跳过", left=left)
 
     last = ""
     for cid in CLIENT_IDS:
@@ -382,9 +590,9 @@ def refresh_slot(path):
             last = f"HTTP {e.code}"
             continue
         except Exception as e:
-            return False, f"网络错误 {type(e).__name__}"
+            return False, t("网络错误 {name}", name=type(e).__name__)
         if not got.get("id_token"):
-            last = "响应缺 id_token"
+            last = t("响应缺 id_token")
             continue
 
         data.pop("refresh_failed", None)
@@ -397,7 +605,7 @@ def refresh_slot(path):
         data["tokens"] = tokens
         data["last_refresh"] = time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime())
         write_json(path, data)
-        return True, "已刷新"
+        return True, t("已刷新")
 
     # 401/400 表示 refresh_token 已被吊销，打个持久标记让 UI 标红提示重新登录
     if "401" in last or "400" in last:
@@ -406,7 +614,7 @@ def refresh_slot(path):
             write_json(path, data)
         except Exception:
             pass
-    return False, f"刷新失败（{last}），需要重新登录"
+    return False, t("刷新失败（{last}），需要重新登录", last=last)
 
 
 # ---------- 切号 ----------
@@ -419,7 +627,7 @@ def switch(slot, force=False, background=False):
     """
     want = info(slot_path(slot))
     if not want:
-        return False, {"err": f"槽位 {slot} 不存在或凭证损坏，建议删掉重新添加"}
+        return False, {"err": t("槽位 {slot} 不存在或凭证损坏，建议删掉重新添加", slot=slot)}
     cur = info(AUTH)
     if running() and same_account(cur, want) and not force:
         if not background:
@@ -428,25 +636,25 @@ def switch(slot, force=False, background=False):
 
     prev = find_slot(cur)
     if not quit_app():
-        return False, {"err": "ChatGPT 没能退出，请手动 Cmd+Q 后重试"}
+        return False, {"err": t("ChatGPT 没能退出，请手动 Cmd+Q 后重试")}
     # 退出之后再存回：App 退出前可能刚刷新过 token
     stash_current()
     backup_auth()
     mark_exit(prev)
 
     ok_r, msg_r = refresh_slot(slot_path(slot))
-    log(f"槽 {slot} 凭证刷新：{msg_r}")
+    log(t("槽 {slot} 凭证刷新：{msg}", slot=slot, msg=msg_r))
     shutil.copy2(slot_path(slot), AUTH)
     launch(slot, background)
-    log(f"切换 {cur['email'] if cur else '无'} → {want['email']} "
-        f"(槽 {slot} / {(want['acct'] or '')[:8]})")
+    log(t("切换 {a} → {b} (槽 {slot} / {acct})", a=cur["email"] if cur else t("无"), b=want["email"],
+          slot=slot, acct=(want["acct"] or "")[:8]))
     record_switch(slot, want["email"])
     return True, {"email": want["email"]}
 
 
 # ---------- 切号历史：对话列表据此推断每个对话跑在哪个账号 ----------
 HISTORY_MAX = 1000
-_SWITCH_LINE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s+切换 .* → (\S+) \(槽 ([A-Z])[ )]")
+_SWITCH_LINE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s+(?:切换|Switched) .* → (\S+) \((?:槽|slot) ([A-Z])[ )]")  # i18n-ignore
 
 
 def _history_from_log():
@@ -470,7 +678,7 @@ def _load_history():
     if not os.path.exists(HISTORY):
         h = _history_from_log()[-HISTORY_MAX:]
         write_json(HISTORY, h)
-        log(f"切号历史：从 manager.log 回填 {len(h)} 条")
+        log(t("切号历史：从 manager.log 回填 {n} 条", n=len(h)))
         return h
     return read_json(HISTORY, [])
 
@@ -490,7 +698,7 @@ def record_switch(slot, email):
             h.append({"at": time.time(), "slot": slot, "email": email or ""})
             write_json(HISTORY, h[-HISTORY_MAX:])
     except Exception as e:
-        log(f"切号历史写入失败 {type(e).__name__}: {e}")
+        log(t("切号历史写入失败 {name}: {e}", name=type(e).__name__, e=e))
 
 
 def slot_at(hist, t):
@@ -561,7 +769,7 @@ def slot_token(slot):
     acct = tok.get("account_id") or (want or {}).get("acct") or ""
     exp = jwt_exp(at)
     if not at or (exp and exp < time.time()):
-        return "", acct, "凭证过期，切到这个账号一次即可刷新"
+        return "", acct, t("凭证过期，切到这个账号一次即可刷新")
     return at, acct, ""
 
 
@@ -587,7 +795,7 @@ _pin_proxy()
 
 
 def _no_network(*a, **k):
-    raise urllib.error.URLError("演示模式不联网")
+    raise urllib.error.URLError(t("演示模式不联网"))
 
 
 if DEMO:
@@ -617,9 +825,9 @@ def fetch_usage(slot):
     try:
         d = backend_get("wham/usage", at, acct)
     except urllib.error.HTTPError as e:
-        return merge_quota(slot, {"error": f"查询失败 HTTP {e.code}", "error_at": now})
+        return merge_quota(slot, {"error": t("查询失败 HTTP {code}", code=e.code), "error_at": now})
     except Exception as e:
-        return merge_quota(slot, {"error": f"网络错误 {type(e).__name__}", "error_at": now})
+        return merge_quota(slot, {"error": t("网络错误 {name}", name=type(e).__name__), "error_at": now})
     rl = d.get("rate_limit") or {}
     short, week = split_windows(_window(rl.get("primary_window")), _window(rl.get("secondary_window")))
     return merge_quota(slot, {
@@ -655,7 +863,7 @@ def _live_token(slot):
     at, acct, err = slot_token(slot)
     if err and slot != current_slot():
         ok, msg = refresh_slot(slot_path(slot))
-        log(f"槽 {slot} 凭证刷新：{msg}")
+        log(t("槽 {slot} 凭证刷新：{msg}", slot=slot, msg=msg))
         if ok:
             at, acct, err = slot_token(slot)
     return at, acct, err
@@ -674,19 +882,19 @@ def _credits(raw):
             for c in (raw or {}).get("credits") or []]
 
 
-def _update_person_credits(mail, token, acct):
-    """用券后重新拉一次券列表，写回 directory.json 里这个邮箱的 resetCredits"""
+def _update_slot_credits(slot, mail, token, acct):
+    """用券后重新拉一次这个槽位的券列表，写回 directory.json 的 slotCredits
+
+    券跟着账号（空间）走：同一邮箱的两个空间各有各的券、id 也不同，拿别的空间的券 id 去用会返回 no_credit。
+    """
     raw, err = _get(RESET_CREDITS, token, acct)
     if raw is None:
-        log(f"{mail} 用券后刷新券列表失败 {err}，等下次同步")
+        log(t("{mail} 用券后刷新券列表失败 {err}，等下次同步", mail=mail, err=err))
         return
     with file_lock("directory"):
         d = load_directory()
-        for p in d.get("people", []):
-            if p.get("email") == mail:
-                p["resetCredits"] = _credits(raw)
-                write_json(DIRECTORY, d)
-                break
+        d.setdefault("slotCredits", {})[slot] = _credits(raw)
+        write_json(DIRECTORY, d)
 
 
 def reset_credit(slot, credit_id=""):
@@ -696,39 +904,40 @@ def reset_credit(slot, credit_id=""):
     """
     i = info(slot_path(slot))
     if not i:
-        return False, f"槽位 {slot} 不存在或凭证损坏", "", None
+        return False, t("槽位 {slot} 不存在或凭证损坏", slot=slot), "", None
     at, acct, err = _live_token(slot)
     if err:
         return False, err, "", None
     if not credit_id:
         raw, e = _get(RESET_CREDITS, at, acct)
         if raw is None:
-            return False, f"读取重置券失败 {e}", "", None
+            return False, t("读取重置券失败 {e}", e=e), "", None
         avail = sorted((c for c in raw.get("credits") or [] if c.get("status") == "available" and c.get("id")),
                        key=lambda c: iso(c.get("expires_at")) or float("inf"))
         if not avail:
-            return False, "这个账号没有可用的重置券", "", None
+            return False, t("这个账号没有可用的重置券"), "", None
         credit_id = avail[0]["id"]
     try:
         r = backend_post(RESET_CREDITS + "/consume", at, acct,
                          {"credit_id": credit_id, "redeem_request_id": str(uuid.uuid4())})
     except urllib.error.HTTPError as e:
-        log(f"槽 {slot} 使用重置券失败 HTTP {e.code}")
-        return False, f"使用失败 HTTP {e.code}", "", None
+        log(t("槽 {slot} 使用重置券失败 HTTP {code}", slot=slot, code=e.code))
+        return False, t("使用失败 HTTP {code}", code=e.code), "", None
     except Exception as e:
-        log(f"槽 {slot} 使用重置券失败 {type(e).__name__}")
-        return False, f"网络错误 {type(e).__name__}", "", None
+        log(t("槽 {slot} 使用重置券失败 {name}", slot=slot, name=type(e).__name__))
+        return False, t("网络错误 {name}", name=type(e).__name__), "", None
     code = r.get("code") or ""
-    log(f"槽 {slot} ({i['email']}) 使用重置券 {credit_id[:16]}：{code or '无返回码'}，"
-        f"重置了 {r.get('windows_reset') or 0} 个窗口")
+    log(t("槽 {slot} ({email}) 使用重置券 {credit}：{code}，重置了 {n} 个窗口", slot=slot, email=i["email"],
+          credit=credit_id[:16], code=code or t("无返回码"), n=r.get("windows_reset") or 0))
     if code not in ("reset", "already_redeemed"):
-        return False, f"没有重置（服务端返回 {code or '空'}）", code, None
+        return False, t("没有重置（服务端返回 {code}）", code=code or t("空")), code, None
     usage = fetch_usage(slot)
-    _update_person_credits(i["email"], at, acct)
+    _update_slot_credits(slot, i["email"], at, acct)
     p = usage.get("primary") or {}
-    push_event("quota", f"{i['email']} 用了一张额度重置券" if code == "reset"
-               else f"{i['email']} 的这张重置券之前已用过",
-               f"槽 {slot} · 5 小时额度已用 {p.get('used', 0):g}%" if p else f"槽 {slot}", "info", slot)
+    push_event("quota", t("{email} 用了一张额度重置券", email=i["email"]) if code == "reset"
+               else t("{email} 的这张重置券之前已用过", email=i["email"]),
+               t("槽 {slot} · 5 小时额度已用 {used:g}%", slot=slot, used=p.get("used", 0)) if p
+               else t("槽 {slot}", slot=slot), "info", slot)
     return True, "", code, usage
 
 
@@ -777,24 +986,24 @@ def _ping_model(token, acct, model, timeout=90):
                 ev = json.loads(line[5:])
             except ValueError:
                 continue
-            t = ev.get("type") or ""
-            if t == "response.completed":
+            typ = ev.get("type") or ""
+            if typ == "response.completed":
                 return True, ""
-            if t in ("response.failed", "response.incomplete", "error"):
+            if typ in ("response.failed", "response.incomplete", "error"):
                 e = (ev.get("response") or {}).get("error") or ev.get("error") or {}
-                return False, f"{t} {e.get('code') or e.get('message') or ''}".strip()
-    return False, "流提前结束，没有 response.completed"
+                return False, f"{typ} {e.get('code') or e.get('message') or ''}".strip()
+    return False, t("流提前结束，没有 response.completed")
 
 
 def start_window(slot):
     """让某账号的 5 小时窗口开始计时 → (成功?, 错误说明, 刷新后的额度或 None)"""
     i = info(slot_path(slot))
     if not i:
-        return False, f"槽位 {slot} 不存在或凭证损坏", None
+        return False, t("槽位 {slot} 不存在或凭证损坏", slot=slot), None
     at, acct, err = _live_token(slot)
     if err:
         return False, err, None
-    ok, err = False, "没有可用的模型"
+    ok, err = False, t("没有可用的模型")
     t0 = int(time.time())
     for model in _warmup_models():
         try:
@@ -804,9 +1013,10 @@ def start_window(slot):
             if e.code in (400, 404):            # 这个账号用不了这个模型，换下一个
                 continue
         except Exception as e:
-            ok, err = False, f"网络错误 {type(e).__name__}"
+            ok, err = False, t("网络错误 {name}", name=type(e).__name__)
         break
-    log(f"槽 {slot} ({i['email']}) 起算 5 小时窗口：" + (f"已发出请求（{model}）" if ok else f"失败 {err}"))
+    log(t("槽 {slot} ({email}) 起算 5 小时窗口：已发出请求（{model}）", slot=slot, email=i["email"], model=model) if ok
+        else t("槽 {slot} ({email}) 起算 5 小时窗口：失败 {err}", slot=slot, email=i["email"], err=err))
     if ok:
         # 刚起算时服务端给的重置时间仍约等于「查询时刻 + 5h」，界面单看它分不出开没开始，记下起算时刻
         merge_quota(slot, {"started_at": t0})
@@ -934,10 +1144,10 @@ def _web_start():
         if r and r.get("ready"):
             _web["proc"] = p
             return p
-        log(f"WebKit 取数据没起来：{(r or {}).get('error') or '没有响应'}")
+        log(t("WebKit 取数据没起来：{err}", err=(r or {}).get("error") or t("没有响应")))
         p.kill()
     except Exception as e:
-        log(f"WebKit 取数据没起来：{type(e).__name__}")
+        log(t("WebKit 取数据没起来：{err}", err=type(e).__name__))
     _web["failed"] = True
     return None
 
@@ -968,14 +1178,14 @@ def web_get(path, token, acct):
         if r is None:
             p.kill()
             _web["proc"] = None
-            return None, "WebKit 无响应"
+            return None, t("WebKit 无响应")
     if r.get("status") == 200:
         try:
             d = json.loads(r.get("body") or "")
             _web["n"] += 1
             return d, ""
         except ValueError:
-            return None, "WebKit 返回的不是 JSON"
+            return None, t("WebKit 返回的不是 JSON")
     return None, f"HTTP {r.get('status')}（WebKit）" if r.get("status") else f"WebKit：{r.get('body')}"
 
 
@@ -1005,7 +1215,7 @@ def _get(path, token, acct):
             d, err = web_get(path, token, acct)
             if err is not None:
                 return d, err
-            return None, "被 Cloudflare 拦截（HTTP 403）"
+            return None, t("被 Cloudflare 拦截（HTTP 403）")
         return None, f"HTTP {e.code}"
     except Exception as e:
         return None, type(e).__name__
@@ -1018,10 +1228,11 @@ def _sub(ent, s):
     disc = ent.get("discount") or {}
     disc_text = ""
     if disc.get("amount"):
-        disc_text = f"每期减 {disc['amount']:g} {ent.get('billing_currency') or ''}".strip()
+        cur = ent.get("billing_currency") or ""
         until = iso(disc.get("discount_expires_at"))
-        if until:
-            disc_text += time.strftime("，至 %Y-%m-%d", time.localtime(until))
+        disc_text = (t("每期减 {amount:g} {cur}，至 {date}", amount=disc["amount"], cur=cur,
+                       date=time.strftime("%Y-%m-%d", time.localtime(until))) if until
+                     else t("每期减 {amount:g} {cur}", amount=disc["amount"], cur=cur)).replace("  ", " ").strip()
     las = s.get("last_active_subscription") or {}
     return {
         "active": bool(ent.get("has_active_subscription")),
@@ -1096,7 +1307,6 @@ def _sync_directory():
             return mail, None, f"{mail}：{err}"
         me, _ = _get("me", at, acct)
         v4, e2 = _get("accounts/check/v4-2023-04-27", at, acct)
-        cr, e3 = _get(RESET_CREDITS, at, acct)
         accounts = None
         if v4 is not None:
             accounts = [(a.get("account") or {}, a.get("entitlement")) for a in (v4.get("accounts") or {}).values()]
@@ -1104,13 +1314,13 @@ def _sync_directory():
             # Codex 自己的接口不会被拦，至少拿到空间列表和角色；订阅沿用上次
             wc, _ = _get("wham/accounts/check", at, acct)
             if wc is None:
-                return mail, None, f"{mail}：空间列表 {e2}"
+                return mail, None, t("{mail}：空间列表 {err}", mail=mail, err=e2)
             accounts = [({"account_id": a.get("id"), "name": a.get("name"), "structure": a.get("structure"),
                           "plan_type": a.get("plan_type"), "is_deactivated": a.get("is_deactivated"),
                           "account_user_role": a.get("account_user_role")}, None)
                         for a in wc.get("accounts") or []]
         return mail, {"token": at, "slot": s, "me": me, "accounts": accounts,
-                      "credits": cr, "partial": v4 is None}, ""
+                      "partial": v4 is None}, ""
 
     with ThreadPoolExecutor(3) as ex:
         got = list(ex.map(per_person, sorted(by_mail)))
@@ -1123,16 +1333,14 @@ def _sync_directory():
                 people.append(old_people[mail])
             continue
         if r["partial"]:
-            errors.append(f"{mail}：订阅信息暂时拿不到，沿用上次")
+            errors.append(t("{mail}：订阅信息暂时拿不到，沿用上次", mail=mail))
         me = r["me"] or {}
         op = old_people.get(mail, {})
-        credits = _credits(r["credits"]) if r["credits"] is not None else op.get("resetCredits", [])
         people.append({
             "email": mail, "name": me.get("name") or op.get("name", ""), "userId": me.get("id") or op.get("userId", ""),
             "created": me.get("created") or op.get("created", 0),
             "mfa": bool(me.get("mfa_flag_enabled", op.get("mfa", False))),
             "country": me.get("country") or op.get("country", ""), "slots": by_mail[mail],
-            "resetCredits": credits,
         })
         for acc, ent in r["accounts"]:
             wid = acc.get("account_id")
@@ -1173,14 +1381,15 @@ def _sync_directory():
             if not w["sub"]["billing"]:
                 w["sub"]["billing"] = s.get("billing_period") or ""
         elif team:
-            w["errors"].append(f"席位{e}，沿用上次")
+            w["errors"].append(t("席位{e}，沿用上次", e=e))
         if team:
             m, e = _members(w["id"], tok)
             if m is None:
                 at = w.get("membersAt") or 0
-                w["errors"].append(f"成员列表{e}，" + (
-                    f"沿用 {time.strftime('%m-%d %H:%M', time.localtime(at))} 的数据" if at
-                    else "沿用上次的数据" if w["members"] is not None else "暂时拿不到"))
+                w["errors"].append(
+                    t("成员列表{e}，沿用 {at} 的数据", e=e, at=time.strftime("%m-%d %H:%M", time.localtime(at))) if at
+                    else t("成员列表{e}，沿用上次的数据", e=e) if w["members"] is not None
+                    else t("成员列表{e}，暂时拿不到", e=e))
                 # 拿不到成员列表时，至少把本机登录过这个空间的账号补进去（比如刚加入的人），
                 # 上次补的先去掉再按这次的 access 重补，人走了不会一直留着
                 ms = [x for x in w["members"] or [] if not x.get("local")]
@@ -1203,22 +1412,37 @@ def _sync_directory():
 
     with ThreadPoolExecutor(3) as ex:
         out_ws = list(ex.map(per_ws, ws.values()))
+
+    # 重置券按槽位拉：券跟着账号（空间）走，同一邮箱的不同空间各有各的券
+    def per_slot(s):
+        at, acct, err = slot_token(s)
+        return s, (None if err else _get(RESET_CREDITS, at, acct)[0])
+
+    old_sc = old.get("slotCredits") or {}
+    slot_credits = {}
+    with ThreadPoolExecutor(3) as ex:
+        for s, cr in ex.map(per_slot, slots()):
+            if cr is not None:
+                slot_credits[s] = _credits(cr)
+            elif s in old_sc:
+                slot_credits[s] = old_sc[s]          # 这次没拿到就沿用上次
     for w in out_ws:
         w.pop("_tok", None)
         w.pop("_rank", None)
     if not people:
-        log(f"同步账号目录失败（{errors[0] if errors else '没有账号'}），保留上次的数据")
+        log(t("同步账号目录失败（{err}），保留上次的数据", err=errors[0] if errors else t("没有账号")))
         return {**old, "errors": errors}, pay_notices(old)     # 交费提醒照旧按上次的成员生成
     data = {"at": time.time(),
             "people": sorted(people, key=lambda p: p["email"]),
             "workspaces": sorted(out_ws, key=lambda w: (w["structure"] != "workspace", (w["name"] or "").lower())),
-            "errors": errors}
+            "slotCredits": slot_credits, "errors": errors}
     write_json(DIRECTORY, data)
     new = add_notices(directory_notices(data, time.time())) + pay_notices(data)
     partial = sum(1 for w in out_ws if w["errors"])
-    log(f"同步账号目录：{len(people)} 个邮箱、{len(out_ws)} 个空间，新消息 {len(new)} 条"
-        + (f"，{len(errors)} 个邮箱 / {partial} 个空间部分沿用上次数据" if errors or partial else "")
-        + (f"（直连被 Cloudflare 拦，{_web['n']} 个请求改由 App 内置 WebKit 取到）" if _web["n"] else ""))
+    log(t("同步账号目录：{people} 个邮箱、{ws} 个空间，新消息 {new} 条", people=len(people), ws=len(out_ws), new=len(new))
+        + (t("，{errors} 个邮箱 / {partial} 个空间部分沿用上次数据", errors=len(errors), partial=partial)
+           if errors or partial else "")
+        + (t("（直连被 Cloudflare 拦，{n} 个请求改由 App 内置 WebKit 取到）", n=_web["n"]) if _web["n"] else ""))
     return data, new
 
 
@@ -1267,17 +1491,17 @@ def set_meta(kind, key, value):
     elif kind == "pay":
         wid, sep, mail = (key or "").partition("|")
         if not sep or not wid.strip() or not mail.strip():
-            return False, "交费日的键应为「空间id|邮箱」"
+            return False, t("交费日的键应为「空间id|邮箱」")
         key = f"{wid.strip()}|{mail.strip().lower()}"
         if value:
             try:
                 datetime.date.fromisoformat(value)
             except ValueError:
-                return False, "日期格式应为 YYYY-MM-DD"
+                return False, t("日期格式应为 YYYY-MM-DD")
     else:
-        return False, f"未知字段 {kind}"
+        return False, t("未知字段 {kind}", kind=kind)
     if not key:
-        return False, "缺少邮箱"
+        return False, t("缺少邮箱")
     with file_lock("meta"):
         d = load_meta()
         if value:
@@ -1287,7 +1511,7 @@ def set_meta(kind, key, value):
         if kind == "pay":
             d["paid"].pop(key, None)   # 交费日换了锚点，已交记录跟着作废：新设的那天就是待交的一期
         write_json(META, d)
-    log(f"成员台账 {kind} {key} → {value or '（删除）'}")
+    log(t("成员台账 {kind} {key} → {value}", kind=kind, key=key, value=value or t("（删除）")))
     return True, ""
 
 
@@ -1344,18 +1568,18 @@ def mark_paid(key, undo=False):
     """标记本期已交（已交到 → 本期应交日，下次交费顺延一个月）；undo 退回上一期 → (成功?, 错误说明)"""
     wid, sep, mail = (key or "").partition("|")
     if not sep or not wid.strip() or not mail.strip():
-        return False, "键应为「空间id|邮箱」"
+        return False, t("键应为「空间id|邮箱」")
     key = f"{wid.strip()}|{mail.strip().lower()}"
     m = _member(key)
     if not m:
-        return False, "目录里没有这个成员，先同步一次"
+        return False, t("目录里没有这个成员，先同步一次")
     since = pay_since()
     with file_lock("meta"):
         d = load_meta()
         manual = d["pay"].get(key) or ""
         due, p = pay_state(manual, d["paid"].get(key) or "", m.get("joined"), since)
         if not due:
-            return False, "算不出交费日"
+            return False, t("算不出交费日")
         if undo:
             a = datetime.date.fromisoformat(manual) if manual else datetime.date.fromtimestamp(m["joined"])
             k = 0
@@ -1367,11 +1591,12 @@ def mark_paid(key, undo=False):
             elif manual:
                 d["paid"][key] = add_months(a, -1).isoformat()
             else:
-                return False, "已经是第一期了"
+                return False, t("已经是第一期了")
         else:
             d["paid"][key] = due.isoformat()
         write_json(META, d)
-    log(f"成员台账 {key} " + (f"撤销已交 → 已交到 {d['paid'][key]}" if undo else f"{due} 这期已交"))
+    log(t("成员台账 {key} 撤销已交 → 已交到 {paid}", key=key, paid=d["paid"][key]) if undo
+        else t("成员台账 {key} {due} 这期已交", key=key, due=due))
     return True, ""
 
 
@@ -1414,47 +1639,51 @@ def directory_notices(d, now):
     day = lambda t: time.strftime("%m-%d %H:%M", time.localtime(t))
     res = []
     for w in d.get("workspaces", []):
-        name = w.get("name") or ("个人空间 · " + (w["access"][0]["email"] if w.get("access") else ""))
+        name = w.get("name") or t("个人空间 · {email}", email=w["access"][0]["email"] if w.get("access") else "")
         s = w.get("sub") or {}
         if s.get("active"):
             if s.get("cancelsAt") or not s.get("willRenew"):
-                t = s.get("cancelsAt") or s.get("expiresAt")
-                if t and 0 < t - now <= span:
-                    res.append({"id": f"expire:{w['id']}:{int(t)}", "kind": "billing", "level": "critical",
-                                "title": f"{name} 将于 {day(t)} 到期", "ws": w["id"], "at": t,
-                                "body": "已关闭自动续费，到期后这个空间的账号将无法使用"})
+                ts = s.get("cancelsAt") or s.get("expiresAt")
+                if ts and 0 < ts - now <= span:
+                    res.append({"id": f"expire:{w['id']}:{int(ts)}", "kind": "billing", "level": "critical",
+                                "title": t("{name} 将于 {day} 到期", name=name, day=day(ts)), "ws": w["id"], "at": ts,
+                                "body": t("已关闭自动续费，到期后这个空间的账号将无法使用")})
             else:
-                t = s.get("renewsAt")
-                if t and 0 < t - now <= span:
-                    res.append({"id": f"renew:{w['id']}:{int(t)}", "kind": "billing", "level": "warn",
-                                "title": f"{name} 将于 {day(t)} 自动续费", "ws": w["id"], "at": t,
+                ts = s.get("renewsAt")
+                if ts and 0 < ts - now <= span:
+                    res.append({"id": f"renew:{w['id']}:{int(ts)}", "kind": "billing", "level": "warn",
+                                "title": t("{name} 将于 {day} 自动续费", name=name, day=day(ts)), "ws": w["id"], "at": ts,
                                 "body": f"{w.get('planName') or w.get('plan')} · {s.get('billing') or ''}"
-                                        + (f" · 席位 {s['seatsUsed']}/{s['seatsTotal']}" if s.get("seatsTotal") else "")})
+                                        + (t(" · 席位 {used}/{total}", used=s["seatsUsed"], total=s["seatsTotal"])
+                                           if s.get("seatsTotal") else "")})
             if s.get("delinquent"):
                 res.append({"id": f"delinquent:{w['id']}", "kind": "billing", "level": "critical",
-                            "title": f"{name} 扣费失败", "ws": w["id"], "at": now,
-                            "body": "订阅处于欠费状态，请尽快更新付款方式"})
+                            "title": t("{name} 扣费失败", name=name), "ws": w["id"], "at": now,
+                            "body": t("订阅处于欠费状态，请尽快更新付款方式")})
         for m in w.get("members") or []:
             if m.get("joined") and 0 <= now - m["joined"] <= span and m.get("role") != "account-owner":
                 res.append({"id": f"join:{w['id']}:{m['id']}", "kind": "member", "level": "info",
-                            "title": f"新成员加入 {name}", "ws": w["id"], "at": m["joined"],
-                            "body": f"{m['email']}{'（' + m['name'] + '）' if m.get('name') else ''} · {day(m['joined'])} 加入"})
+                            "title": t("新成员加入 {name}", name=name), "ws": w["id"], "at": m["joined"],
+                            "body": t("{email}（{name}） · {day} 加入", email=m["email"], name=m["name"], day=day(m["joined"]))
+                            if m.get("name") else t("{email} · {day} 加入", email=m["email"], day=day(m["joined"]))})
             if m.get("deactivatedAt") and 0 <= now - m["deactivatedAt"] <= span:
                 res.append({"id": f"leave:{w['id']}:{m['id']}", "kind": "member", "level": "info",
-                            "title": f"成员离开 {name}", "ws": w["id"], "at": m["deactivatedAt"],
-                            "body": f"{m['email']} · {day(m['deactivatedAt'])} 停用"})
+                            "title": t("成员离开 {name}", name=name), "ws": w["id"], "at": m["deactivatedAt"],
+                            "body": t("{email} · {day} 停用", email=m["email"], day=day(m["deactivatedAt"]))})
         for i in w.get("invites") or []:
             if i.get("created") and 0 <= now - i["created"] <= span:
                 res.append({"id": f"invite:{w['id']}:{i['email']}", "kind": "member", "level": "info",
-                            "title": f"{name} 发出了新邀请", "ws": w["id"], "at": i["created"],
-                            "body": f"{i['email']} 尚未接受"})
-    for p in d.get("people", []):
-        for c in p.get("resetCredits") or []:
-            t = c.get("expiresAt") or 0
-            if c.get("status") == "available" and 0 < t - now <= span:
+                            "title": t("{name} 发出了新邀请", name=name), "ws": w["id"], "at": i["created"],
+                            "body": t("{email} 尚未接受", email=i["email"])})
+    mail_of = {s: p["email"] for p in d.get("people", []) for s in p.get("slots") or []}
+    for slot, cs in sorted((d.get("slotCredits") or {}).items()):
+        for c in cs:
+            ts = c.get("expiresAt") or 0
+            if c.get("status") == "available" and 0 < ts - now <= span:
                 res.append({"id": f"credit:{c['id']}", "kind": "quota", "level": "warn",
-                            "title": f"{p['email']} 有一张额度重置券 {day(t)} 过期",
-                            "at": t, "body": (c.get("title") or "免费额度重置") + "，过期作废"})
+                            "title": t("槽 {slot}（{email}）有一张额度重置券 {day} 过期", slot=slot,
+                                       email=mail_of.get(slot, ""), day=day(ts)),
+                            "at": ts, "body": t("{title}，过期作废", title=c.get("title") or t("免费额度重置"))})
     return res
 
 
@@ -1471,23 +1700,24 @@ def pay_notices(d=None):
         members = w.get("members") or []
         owner = next((m.get("email") for m in members if m.get("role") == "account-owner"), "") \
             or next((x["email"] for x in w.get("access") or [] if x.get("role") == "account-owner"), "")
-        name = w.get("name") or ("个人空间 · " + (w["access"][0]["email"] if w.get("access") else ""))
+        name = w.get("name") or t("个人空间 · {email}", email=w["access"][0]["email"] if w.get("access") else "")
         for m in members:
-            t = m.get("nextPay")
-            if not t:
+            ts = m.get("nextPay")
+            if not ts:
                 continue
-            due = datetime.date.fromtimestamp(t)
+            due = datetime.date.fromtimestamp(ts)
             days = (due - today).days
             if days > NOTICE_DAYS:
                 continue
             late = days < 0                     # 过了应交日还没标记已交
-            joined = time.strftime("%Y-%m-%d", time.localtime(m["joined"])) if m.get("joined") else "未知"
+            who = m.get("wechat") or m.get("email")
+            joined = time.strftime("%Y-%m-%d", time.localtime(m["joined"])) if m.get("joined") else t("未知")
             res.append({"id": f"pay:{w['id']}:{(m.get('email') or '').lower()}:{due.isoformat()}" + (":late" if late else ""),
-                        "kind": "pay", "level": "error" if late else "warn", "ws": w["id"], "at": t,
-                        "title": f"{m.get('wechat') or m.get('email')} {due:%m-%d} "
-                                 + (f"的费用已逾期 {-days} 天" if late else "该交费了"),
-                        "body": f"{name} · 所有者 {owner or '未知'} · {joined} 加入"
-                                + ("（交费日手动设置）" if m.get("payManual") else "")})
+                        "kind": "pay", "level": "error" if late else "warn", "ws": w["id"], "at": ts,
+                        "title": t("{who} {due} 的费用已逾期 {days} 天", who=who, due=f"{due:%m-%d}", days=-days) if late
+                        else t("{who} {due} 该交费了", who=who, due=f"{due:%m-%d}"),
+                        "body": t("{name} · 所有者 {owner} · {joined} 加入", name=name, owner=owner or t("未知"), joined=joined)
+                                + (t("（交费日手动设置）") if m.get("payManual") else "")})
     return add_notices(res)
 
 
@@ -1515,7 +1745,7 @@ def add_notices(items):
     for n in new[:3]:
         notify(n["title"], n.get("body") or "")
     if len(new) > 3:
-        notify(f"还有 {len(new) - 3} 条新消息", "打开「ChatGPT 账号」的消息中心查看")
+        notify(t("还有 {n} 条新消息", n=len(new) - 3), t("打开「ChatGPT 账号」的消息中心查看"))
     return new
 
 
@@ -1557,9 +1787,10 @@ def notify(title, text=""):
         except Exception:
             pass
     q = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')
+    app = t("ChatGPT 账号")
     try:
         subprocess.run(["/usr/bin/osascript", "-e",
-                        f'display notification "{q(text)}" with title "ChatGPT 账号" subtitle "{q(title)}"'],
+                        f'display notification "{q(text)}" with title "{q(app)}" subtitle "{q(title)}"'],
                        capture_output=True, timeout=10)
     except Exception:
         pass
@@ -1588,29 +1819,38 @@ def load_config():
 # auto_start 自动开始计时：5 小时窗口没开始的账号，由后台服务挨个发一句极短的请求起算；
 # auto_continue 回合正常结束后自动发续答用语，continue_max 同一个对话连续自动继续的上限（用户发消息后重新计数）；
 # quiet_switch 后台切号：自动切号、续答时不把 ChatGPT 叫到前台，也不让它跳到被续答的对话；
-# skip 不参与轮换的槽位：自动切号挑下一个时跳过它们（手动切过去照常能用）
-CONFIG_DEFAULTS = {"enabled": True, "prompt": "继续", "stall_nudge": True, "order": "alpha", "auto_start": False,
-                   "auto_continue": False, "continue_max": 5, "quiet_switch": True, "skip": []}
+# skip 不参与轮换的槽位：自动切号挑下一个时跳过它们（手动切过去照常能用）；
+# lang 界面语言 zh / en（App 启动时按它的界面语言写；空 = 还没写过，按中文）
+PROMPT_DEFAULT = {"zh": "继续", "en": "Continue"}       # i18n-ignore  默认续答用语，按界面语言
+CONFIG_DEFAULTS = {"enabled": True, "prompt": "继续", "stall_nudge": True, "order": "alpha", "auto_start": False,  # i18n-ignore
+                   "auto_continue": False, "continue_max": 5, "quiet_switch": True, "skip": [], "lang": ""}
 
 
 def set_config(key, value):
     if key not in CONFIG_DEFAULTS or type(value) is not type(CONFIG_DEFAULTS[key]):
-        raise ValueError(f"不支持的设置：{key}={value!r}")
+        raise ValueError(t("不支持的设置：{key}={value!r}", key=key, value=value))
     if key == "prompt" and not value.strip():
-        raise ValueError("续答用语不能为空")
+        raise ValueError(t("续答用语不能为空"))
     if key == "order" and value not in ("alpha", "most", "soon"):
-        raise ValueError("切号顺序只能是 alpha、most 或 soon")
+        raise ValueError(t("切号顺序只能是 alpha、most 或 soon"))
     if key == "continue_max" and not 1 <= value <= 50:
-        raise ValueError("自动继续次数上限要在 1 到 50 之间")
+        raise ValueError(t("自动继续次数上限要在 1 到 50 之间"))
+    if key == "lang" and value not in ("", "zh", "en"):
+        raise ValueError(t("lang 只能是 zh 或 en"))
     if key == "skip":
         if not all(type(s) is str for s in value):
-            raise ValueError("skip 要是槽位名列表")
+            raise ValueError(t("skip 要是槽位名列表"))
         value = sorted(set(value))
     with file_lock("config"):
         c = load_config()
+        if key == "lang" and value != c.get("lang"):
+            # 续答用语还是另一种语言的默认值，就跟着换成这种语言的（自己改过的不动）
+            want, other = PROMPT_DEFAULT.get(value or "zh"), PROMPT_DEFAULT.get("zh" if value == "en" else "en")
+            if c.get("prompt") == other:
+                c["prompt"] = want
         c[key] = value
         write_json(CONFIG, c)
-    log(f"设置 {key} = {value}")
+    log(t("设置 {key} = {value}", key=key, value=value))
     return c
 
 
@@ -1658,8 +1898,8 @@ def ensure_daemon(restart=False):
         r = subprocess.run(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", DAEMON_PLIST],
                            capture_output=True, text=True)
         if r.returncode != 0:
-            return False, r.stderr.strip() or f"launchctl 返回 {r.returncode}"
-        log("守护进程已（重新）安装")
+            return False, r.stderr.strip() or t("launchctl 返回 {code}", code=r.returncode)
+        log(t("守护进程已（重新）安装"))
     elif restart:
         subprocess.run(["/bin/launchctl", "kickstart", "-k", target], capture_output=True)
     return True, ""
@@ -1734,6 +1974,20 @@ def api_hide_team(wid, hide):
     out({"ok": True, "hidden": ids})
 
 
+def api_phrases():
+    """中英对照表（engine.py 和 autoswitch.py 里 t() 的全部句子）：App 用它把以前按另一种语言写下的消息、日志换成当前语言"""
+    table = {**EN_OLD, **EN}
+    try:
+        # autoswitch.py 的句子是导入时 update 进它自己那份 engine 的 EN 表的
+        spec = importlib.util.spec_from_file_location("autoswitch_phrases", os.path.join(HERE, "autoswitch.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        table.update(m.eng.EN)
+    except Exception as e:
+        log(t("读取 autoswitch.py 的译文失败：{err}", err=type(e).__name__))
+    out({"ok": True, "pairs": table})
+
+
 def api_notices():
     d = load_notices()
     out({"ok": True, "items": d["items"], "unread": sum(1 for n in d["items"] if not n.get("read"))})
@@ -1764,7 +2018,7 @@ def api_continue(threads):
 def api_pause(threads):
     """会话页的「暂停」：请守护进程停下这些对话正在跑的这一轮，并移出续答队列"""
     if not threads:
-        return out({"ok": False, "err": "没有要暂停的对话"}, False)
+        return out({"ok": False, "err": t("没有要暂停的对话")}, False)
     with file_lock("request"):
         req = read_json(REQUEST, []) + [{"thread": t, "pause": True} for t in threads]
         write_json(REQUEST, req)
@@ -1777,9 +2031,9 @@ def api_set_thread(arg):
         d = json.loads(arg)
         threads, settings = list(d["threads"]), {k: v for k, v in d["settings"].items() if k in ("model", "effort", "tier") and v}
     except (ValueError, KeyError, TypeError, AttributeError):
-        return out({"ok": False, "err": "参数格式不对"}, False)
+        return out({"ok": False, "err": t("参数格式不对")}, False)
     if not threads or not settings:
-        return out({"ok": False, "err": "没有要改的对话或设置"}, False)
+        return out({"ok": False, "err": t("没有要改的对话或设置")}, False)
     with file_lock("request"):
         req = read_json(REQUEST, []) + [{"thread": t, "settings": settings} for t in threads]
         write_json(REQUEST, req)
@@ -1796,7 +2050,7 @@ def api_auto_begin(slot):
     profile 开一个干净窗口，让用户在里面登录（网页会话和 auth.json 才成对）"""
     cur = info(AUTH)
     if not quit_app():
-        out({"ok": False, "err": "ChatGPT 没能退出，请手动 Cmd+Q 后重试"}, False)
+        out({"ok": False, "err": t("ChatGPT 没能退出，请手动 Cmd+Q 后重试")}, False)
     stash_current()
     backup_auth()
     if cur:
@@ -1806,23 +2060,23 @@ def api_auto_begin(slot):
     except Exception:
         pass
     launch(slot)
-    log(f"添加：已退出并登出，用槽 {slot} 的 profile 开窗等待登录")
+    log(t("添加：已退出并登出，用槽 {slot} 的 profile 开窗等待登录", slot=slot))
     out({"ok": True, "slot": slot})
 
 
 def api_next_slot():
     """预分配下一个空槽位字母，UI 在登录前就要确定 profile"""
     slot = next((c for c in SLOTPOOL if c not in set(slots())), "")
-    out({"ok": bool(slot), "slot": slot, "err": "" if slot else "槽位已满"})
+    out({"ok": bool(slot), "slot": slot, "err": "" if slot else t("槽位已满")})
 
 
 def api_relaunch(slot):
     """添加完成：登录用的 ChatGPT 就是新槽位的，一般还开着，不动它；被关掉了才在后台拉起"""
     if running():
-        log(f"添加完成（槽 {slot}），ChatGPT 已在运行")
+        log(t("添加完成（槽 {slot}），ChatGPT 已在运行", slot=slot))
     else:
         launch(slot, background=True)
-        log(f"添加完成，后台拉起 ChatGPT（槽 {slot}）")
+        log(t("添加完成，后台拉起 ChatGPT（槽 {slot}）", slot=slot))
     out({"ok": True})
 
 
@@ -1837,16 +2091,16 @@ def api_capture():
     """把当前登录的凭证收进一个新槽位（添加账号的最后一步）"""
     new = info(AUTH)
     if not new or not new["acct"]:
-        out({"ok": False, "err": "没读到凭证，可能还没登录成功"}, False)
+        out({"ok": False, "err": t("没读到凭证，可能还没登录成功")}, False)
     dup = find_slot(new)
     if dup:
-        out({"ok": False, "err": f"{new['email']} 的这个 workspace 已在槽位 {dup}",
+        out({"ok": False, "err": t("{email} 的这个 workspace 已在槽位 {dup}", email=new["email"], dup=dup),
              "dup": dup, "email": new["email"]}, False)
     slot = next((c for c in SLOTPOOL if c not in set(slots())), None)
     if not slot:
-        out({"ok": False, "err": "槽位已满"}, False)
+        out({"ok": False, "err": t("槽位已满")}, False)
     shutil.copy2(AUTH, slot_path(slot))
-    log(f"添加 {new['email']} / {new['acct'][:8]} → 槽 {slot}")
+    log(t("添加 {email} / {acct} → 槽 {slot}", email=new["email"], acct=new["acct"][:8], slot=slot))
     fetch_usage(slot)
     out({"ok": True, "slot": slot, "email": new["email"], "plan": new["plan"] or ""})
 
@@ -1882,7 +2136,7 @@ def api_rename(slot, name):
     else:
         d.pop(slot, None)
     save_names(d)
-    log(f"重命名槽 {slot} → {name}")
+    log(t("重命名槽 {slot} → {name}", slot=slot, name=name))
     out({"ok": True})
 
 
@@ -1890,7 +2144,7 @@ def api_delete(slot):
     """删除槽位（只删本机凭证），禁止删当前正在用的那个"""
     cur, i = info(AUTH), info(slot_path(slot))
     if same_account(cur, i):
-        out({"ok": False, "err": "不能删除当前正在使用的账号"}, False)
+        out({"ok": False, "err": t("不能删除当前正在使用的账号")}, False)
     if os.path.exists(slot_path(slot)):
         os.remove(slot_path(slot))
     d = names(); d.pop(slot, None); save_names(d)
@@ -1898,7 +2152,7 @@ def api_delete(slot):
         set_config("skip", [s for s in load_config()["skip"] if s != slot])
     with file_lock("quota"):
         q = load_quota(); q.pop(slot, None); write_json(QUOTA, q)
-    log(f"删除槽 {slot} ({(i or {}).get('email')})")
+    log(t("删除槽 {slot} ({email})", slot=slot, email=(i or {}).get("email")))
     out({"ok": True})
 
 
@@ -1928,6 +2182,7 @@ def main():
     if cmd == "--hide-team":      return api_hide_team(a[1], True)
     if cmd == "--unhide-team":    return api_hide_team(a[1], False)
     if cmd == "--notices-json":   return api_notices()
+    if cmd == "--phrases-json":   return api_phrases()
     if cmd == "--notice-read":    mark_notices(a[1:]); return out({"ok": True})
     if cmd == "--ensure-daemon":
         ok, err = ensure_daemon(restart="--restart" in a)
@@ -1944,7 +2199,7 @@ def main():
     if cmd == "--start-candidates": return out({"ok": True, "slots": start_candidates(time.time())})
     if cmd == "--meta-set":       return api_meta_set(a[1], a[2], a[3] if len(a) > 3 else "")
     if cmd == "--mark-paid":      return api_mark_paid(a[1], "--undo" in a)
-    out({"ok": False, "err": f"未知命令：{' '.join(a) or '（空）'}"}, False)
+    out({"ok": False, "err": t("未知命令：{cmd}", cmd=" ".join(a) or t("（空）"))}, False)
 
 
 if __name__ == "__main__":
