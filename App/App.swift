@@ -616,23 +616,28 @@ struct AccountsApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             // 菜单栏只留用得到的：应用菜单（关于 / 隐藏 / 退出）和编辑菜单（剪切 / 拷贝 / 粘贴 / 全选，输入框要靠它）
-            CommandGroup(replacing: .newItem) {}
-            CommandGroup(replacing: .saveItem) {}
-            CommandGroup(replacing: .importExport) {}
-            CommandGroup(replacing: .printItem) {}
-            CommandGroup(replacing: .systemServices) {}
-            CommandGroup(replacing: .appVisibility) {
-                Button("隐藏 ChatGPT 账号") { NSApp.hide(nil) }.keyboardShortcut("h")
+            // 分两组：较早的 SDK（Xcode 26.0）里 commands 一层最多 10 项
+            Group {
+                CommandGroup(replacing: .newItem) {}
+                CommandGroup(replacing: .saveItem) {}
+                CommandGroup(replacing: .importExport) {}
+                CommandGroup(replacing: .printItem) {}
+                CommandGroup(replacing: .systemServices) {}
+                CommandGroup(replacing: .appVisibility) {
+                    Button("隐藏 ChatGPT 账号") { NSApp.hide(nil) }.keyboardShortcut("h")
+                }
+                CommandGroup(replacing: .undoRedo) {}
+                CommandGroup(replacing: .textEditing) {}
             }
-            CommandGroup(replacing: .undoRedo) {}
-            CommandGroup(replacing: .textEditing) {}
-            CommandGroup(replacing: .textFormatting) {}
-            CommandGroup(replacing: .toolbar) {}
-            CommandGroup(replacing: .sidebar) {}
-            CommandGroup(replacing: .windowSize) {}
-            CommandGroup(replacing: .windowList) {}
-            CommandGroup(replacing: .windowArrangement) {}
-            CommandGroup(replacing: .help) {}
+            Group {
+                CommandGroup(replacing: .textFormatting) {}
+                CommandGroup(replacing: .toolbar) {}
+                CommandGroup(replacing: .sidebar) {}
+                CommandGroup(replacing: .windowSize) {}
+                CommandGroup(replacing: .windowList) {}
+                CommandGroup(replacing: .windowArrangement) {}
+                CommandGroup(replacing: .help) {}
+            }
         }
     }
 }
