@@ -56,7 +56,7 @@ it switches to the next available one and sends "continue" in every conversation
 | 💰 **Member payments** | Monthly due dates per member, overdue in red, "mark as paid" moves to next month |
 | 🔔 **Notifications** | Renewals, expiries, failed payments, dues, new members, expiring credits — 3 days ahead |
 | 🛡 **Cloudflare-proof** | When Cloudflare blocks the team / subscription / member endpoints, they're fetched through the app's built-in WebKit instead |
-| 🔒 **Local only** | No server, no telemetry. Talks to chatgpt.com and nothing else |
+| 🔒 **Local only** | No server, no data collection |
 
 Plus the small things: hover a bar on the overview chart for that account's details; the auto-switch card shows the current
 and the next account; right-click an account to switch, refresh, use a reset credit, start the clock, copy, rename or delete;
