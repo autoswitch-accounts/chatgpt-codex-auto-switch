@@ -5,7 +5,8 @@
 # ChatGPT / Codex Auto Switch
 
 **Run several ChatGPT / Codex accounts from one window.**<br>
-When one account hits its usage limit, switch to the next one automatically and pick the interrupted conversation back up.
+When one account hits its usage limit, switch to the next one automatically and pick the interrupted conversation back up.<br>
+Continue or pause every Codex conversation from one table, and change model, reasoning effort and speed on the fly.<br>
 Team renewals, member payments and limit-reset credits all in one place.
 
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#requirements)
@@ -14,7 +15,7 @@ Team renewals, member payments and limit-reset credits all in one place.
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](engine.py)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-[**⬇ Download**](../../releases/latest) · [Features](#features) · [Install](#install) · [FAQ](#faq) · [中文](README.md)
+[**⬇ Download**](../../releases/latest) · [Features](#features) · [Sessions](#sessions) · [Install](#install) · [FAQ](#faq) · [中文](README.md)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
@@ -44,6 +45,8 @@ it switches to the next available one and sends "continue" in every conversation
 | | |
 |---|---|
 | 🔄 **Auto-switch & resume** | When the limit is hit, waits for the account's other running conversations to finish their turn, switches to the next usable account and resumes the interrupted ones in the background — without pulling ChatGPT to the front |
+| 💬 **Sessions** | Every Codex conversation in one table — running, stuck, stopped at the limit, and on which account; **continue / pause** one or a checked batch, all in the background |
+| 🧠 **Model & speed on the fly** | Change **model, reasoning effort (low → extra high) and speed (Standard / Fast 2×)** per conversation or in bulk, from the next turn; same options ChatGPT's own menu shows |
 | 🧭 **Switching rules** | Pick the next account alphabetically, soonest reset first, or most remaining; keep an account out of the rotation with "skip rotation" |
 | 📊 **Quota at a glance** | 5-hour and weekly remaining quota, reset times and when each exhausted account comes back |
 | ▶️ **Keep going** | When the model stops on its own (not a limit), send "continue" automatically — capped per conversation |
@@ -51,8 +54,6 @@ it switches to the next available one and sends "continue" in every conversation
 | 🎟 **Reset credits** | Lists free limit-reset credits and their expiry; use one with a confirmation |
 | 🏢 **Teams & subscriptions** | Renewal / expiry dates, seat usage, members and pending invites of every team workspace |
 | 💰 **Member payments** | Monthly due dates per member, overdue in red, "mark as paid" moves to next month |
-| 💬 **Sessions** | Which conversations are running, which stopped at the limit, and on which account; **continue / pause** one or a checked batch without switching to ChatGPT |
-| 🧠 **Model & speed** | Change the model, reasoning effort and speed (Standard / Fast) per conversation or in bulk, with the same options ChatGPT's own menu shows |
 | 🔔 **Notifications** | Renewals, expiries, failed payments, dues, new members, expiring credits — 3 days ahead |
 | 🛡 **Cloudflare-proof** | When Cloudflare blocks the team / subscription / member endpoints, they're fetched through the app's built-in WebKit instead |
 | 🔒 **Local only** | No server, no telemetry. Talks to chatgpt.com and nothing else |
@@ -72,11 +73,43 @@ current account with 5-hour and weekly bars.
   </tr>
   <tr>
     <td><img src="docs/images/members.png" alt="Member payments"></td>
-    <td><img src="docs/images/sessions.png" alt="Sessions"></td>
+    <td><img src="docs/images/resets.png" alt="Reset credits"></td>
   </tr>
   <tr>
     <td><img src="docs/images/messages.png" alt="Notifications"></td>
     <td><img src="docs/images/settings.png" alt="Settings"></td>
+  </tr>
+</table>
+
+## Sessions
+
+Every Codex conversation from the last 48 hours in one table, without opening them one by one in ChatGPT: status
+(running, possibly stuck, stopped at the limit, paused here, stopped by you, done), account, project, sub-tasks, run time and
+last activity, newest first. *Needs attention* keeps only the running, interrupted, paused and queued ones; search by title or project.
+Everything below runs in the background — ChatGPT is not brought to the front.
+
+- **Continue / pause** — each row has *Continue* (idle) or *Pause* (running). Pause is the same as ChatGPT's stop button;
+  conversations paused here are marked and skipped by auto-resume until you continue them.
+- **Check to act in bulk** — tick rows (the header box selects all); the header buttons continue, pause or adjust the model of the
+  checked conversations, or of the whole list when nothing is checked. About to run out? *Pause all*, switch, *Continue all*.
+- **Model, reasoning effort and speed on the fly** — the Model column shows model · effort (⚡ for Fast). Click it for the same menu
+  ChatGPT has: model, effort (low / medium / high / extra high…), speed (*Standard · default speed* / *Fast · 2× speed, uses more*),
+  current values ticked. Drop easy work to low + Fast, bump a hard one to extra high, without hunting for it in ChatGPT.
+- **Bulk adjust** — change model, effort and speed of all checked conversations at once; each can be left "unchanged" so every
+  conversation keeps its own value.
+
+Changes apply from the next turn; a conversation that isn't open in ChatGPT is opened in the background briefly and focus is handed back.
+
+<img src="docs/images/sessions.png" alt="Sessions: check a few conversations and continue, pause or adjust the model from the header" width="100%">
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/sessions-model.png" alt="Model menu: model, reasoning effort, speed"></td>
+    <td width="50%"><img src="docs/images/sessions-bulk.png" alt="Bulk adjust: model, reasoning effort, speed for the checked conversations"></td>
+  </tr>
+  <tr>
+    <td align="center">Click the Model column: model, effort, speed</td>
+    <td align="center">Bulk adjust: leave any of them unchanged</td>
   </tr>
 </table>
 

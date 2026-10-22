@@ -189,6 +189,15 @@ struct SessionsPage: View {
             Button { store.reloadSessions() } label: { Label("刷新", systemImage: "arrow.clockwise") }
         }
         .onAppear { store.loadModels() }
+        .onAppear {   // 截图 / 演示用：--sessions-all 看全部、--demo-check 勾选前 3 行、--show-bulk 打开批量调整
+            // （参数后面不能跟数字：跟了窗口就不出来）
+            let args = CommandLine.arguments
+            if args.contains("--sessions-all") { filter = "all" }
+            if args.contains("--demo-check") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { checked = Set(rows.prefix(3).map(\.id)) }
+            }
+            if args.contains("--show-bulk") { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { bulk = true } }
+        }
         .onAppear { if let f = store.focus, store.sessions.contains(where: { $0.thread == f }) { selection = f; filter = "all"; store.focus = nil } }
     }
 
