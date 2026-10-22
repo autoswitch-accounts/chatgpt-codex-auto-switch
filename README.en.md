@@ -10,7 +10,7 @@ Continue or pause every Codex conversation from one table, and change model, rea
 Team renewals, member payments and limit-reset credits all in one place — in English or Chinese.
 
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#requirements)
-[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M4-555555)](#requirements)
+[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-555555)](#requirements)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](App)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](engine.py)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)

@@ -9,7 +9,7 @@
 团队续费、成员交费、额度重置券一目了然；中文 / English 界面随时切换。
 
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#系统要求)
-[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M4-555555)](#系统要求)
+[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-555555)](#系统要求)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](App)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](engine.py)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
