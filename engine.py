@@ -116,6 +116,7 @@ EN = {
     "槽位 {slot} 不存在或凭证损坏，建议删掉重新添加": "Slot {slot} is missing or its credentials are corrupted; delete it and add it again",
     "ChatGPT 没能退出，请手动 Cmd+Q 后重试": "ChatGPT didn't quit. Press Cmd+Q and try again",
     "槽 {slot} 凭证刷新：{msg}": "Slot {slot} credentials refresh: {msg}",
+    "槽 {slot} 查额度被拒（HTTP 401），凭证刷新：{msg}": "Slot {slot} usage check rejected (HTTP 401); credentials refresh: {msg}",
     "切换 {a} → {b} (槽 {slot} / {acct})": "Switched {a} → {b} (slot {slot} / {acct})",
     "无": "none",
     "切号历史：从 manager.log 回填 {n} 条": "Switch history: backfilled {n} entries from manager.log",
@@ -221,8 +222,8 @@ EN = {
     "没有要暂停的对话": "No conversations to pause",
     "参数格式不对": "Invalid arguments",
     "没有要改的对话或设置": "No conversations or settings to change",
-    "添加：已退出并登出，用槽 {slot} 的 profile 开窗等待登录":
-        "Add: quit and signed out, opened a window with slot {slot}'s profile, waiting for sign-in",
+    "添加：已退出并清掉本机登录（不注销账号），用槽 {slot} 的 profile 开窗等待登录":
+        "Add: quit and cleared the local sign-in (the account stays signed in), opened a window with slot {slot}'s profile, waiting for sign-in",
     "槽位已满": "All slots are full",
     "添加完成（槽 {slot}），ChatGPT 已在运行": "Added (slot {slot}), ChatGPT already running",
     "添加完成，后台拉起 ChatGPT（槽 {slot}）": "Added, launching ChatGPT in the background (slot {slot})",
@@ -563,7 +564,15 @@ def refresh_slot(path):
 
     ⚠️ 刷新成功服务端会轮换 refresh_token，必须立刻原子写回，丢了就只能重新登录。
     失败不阻断切换（不比现状更差）。
+
+    App 和守护进程可能同时刷新同一槽：加锁，后到的在锁里重读文件，看到刚换的新 token 就跳过，
+    不会拿已被轮换掉的旧 refresh_token 再换一次。
     """
+    with file_lock("refresh"):
+        return _refresh_slot(path)
+
+
+def _refresh_slot(path):
     data = read_json(path, None)
     if data is None:
         return False, t("读取失败")
@@ -816,7 +825,7 @@ def backend_get(path, token, acct, timeout=15):
         return json.loads(r.read())
 
 
-def fetch_usage(slot):
+def fetch_usage(slot, retry=True):
     """联网查一个槽位的实时额度（Codex 自己 /status 用的同一个接口），并进缓存后返回"""
     now = time.time()
     at, acct, err = slot_token(slot)
@@ -825,6 +834,14 @@ def fetch_usage(slot):
     try:
         d = backend_get("wham/usage", at, acct)
     except urllib.error.HTTPError as e:
+        if e.code == 401 and retry and slot != current_slot() and not needs_login(slot_path(slot)):
+            # 快照里的凭证被服务端作废了（比如这个账号在别处登出过）：刷新一次。刷新也被拒会打上
+            # 「需要重新登录」，界面标红、自动切号不再切过去；刷新成功就用新凭证再查一次。
+            # 当前槽不碰：它的 refresh_token 在 auth.json 里归 App 管
+            ok, msg = refresh_slot(slot_path(slot))
+            log(t("槽 {slot} 查额度被拒（HTTP 401），凭证刷新：{msg}", slot=slot, msg=msg))
+            if ok:
+                return fetch_usage(slot, retry=False)
         return merge_quota(slot, {"error": t("查询失败 HTTP {code}", code=e.code), "error_at": now})
     except Exception as e:
         return merge_quota(slot, {"error": t("网络错误 {name}", name=type(e).__name__), "error_at": now})
@@ -932,6 +949,9 @@ def reset_credit(slot, credit_id=""):
     if code not in ("reset", "already_redeemed"):
         return False, t("没有重置（服务端返回 {code}）", code=code or t("空")), code, None
     usage = fetch_usage(slot)
+    if code == "reset":
+        # 守护进程据此认出「当前号用券恢复了」，不切号直接续答；撞限时挡的半小时也作废
+        usage = merge_quota(slot, {"credit_used_at": time.time(), "block_until": 0})
     _update_slot_credits(slot, i["email"], at, acct)
     p = usage.get("primary") or {}
     push_event("quota", t("{email} 用了一张额度重置券", email=i["email"]) if code == "reset"
@@ -2046,7 +2066,7 @@ def api_switch(slot, force):
 
 
 def api_auto_begin(slot):
-    """添加前置：存回当前凭证 → 退出 ChatGPT → codex logout → 用新槽位自己的
+    """添加前置：存回当前凭证 → 退出 ChatGPT → 删掉本机凭证 → 用新槽位自己的
     profile 开一个干净窗口，让用户在里面登录（网页会话和 auth.json 才成对）"""
     cur = info(AUTH)
     if not quit_app():
@@ -2055,12 +2075,14 @@ def api_auto_begin(slot):
     backup_auth()
     if cur:
         mark_exit(find_slot(cur))
+    # 只在本机删掉凭证，不跑 codex logout：新版 codex 登出时会到服务端吊销这份凭证，
+    # 刚存回槽位的那份跟着作废（之后查额度一直 401，切回去要重新登录）
     try:
-        subprocess.run([CODEX, "logout"], capture_output=True, text=True, timeout=30)
-    except Exception:
+        os.remove(AUTH)
+    except FileNotFoundError:
         pass
     launch(slot)
-    log(t("添加：已退出并登出，用槽 {slot} 的 profile 开窗等待登录", slot=slot))
+    log(t("添加：已退出并清掉本机登录（不注销账号），用槽 {slot} 的 profile 开窗等待登录", slot=slot))
     out({"ok": True, "slot": slot})
 
 

@@ -416,7 +416,7 @@ struct AddSheet: View {
         VStack(alignment: .leading, spacing: 13) {
             VStack(alignment: .leading, spacing: 9) {
                 step(L("保存当前凭证并退出 ChatGPT"), auto: true)
-                step(L("登出当前账号（codex logout）"), auto: true)
+                step(L("清掉本机登录（不注销当前账号）"), auto: true)
                 step(L("用新槽位的独立 profile 开窗"), auto: true)
                 step(L("在窗口里登录、选择 workspace"), auto: false)
                 step(L("识别新账号和 workspace 名、存入槽位、重开 ChatGPT"), auto: true)

@@ -532,7 +532,7 @@ final class Store: ObservableObject {
         baseline = Store.decode(Store.exec("engine.py", ["--current-json"]), Current.self)?.who ?? ""
     }
 
-    /// 存回当前凭证 → 退出 ChatGPT → codex logout → 用新槽位的 profile 开窗 → 等登录 → 自动收凭证
+    /// 存回当前凭证 → 退出 ChatGPT → 删掉本机凭证（不注销）→ 用新槽位的 profile 开窗 → 等登录 → 自动收凭证
     func runAdd() {
         Task {
             // 先定下新槽位，才能用它自己的 profile 开窗登录（会话必须和凭证成对）

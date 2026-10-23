@@ -413,7 +413,7 @@
 "界面文字的语言；后台服务新写的日志、通知和状态也跟着换" = "Language of the interface; new logs, notifications and status from the background service follow it too";
 "留空则显示官方名「%@」" = "Leave blank to show the official name “%@”";
 "疑似卡住" = "Possibly stuck";
-"登出当前账号（codex logout）" = "Sign out of the current account (codex logout)";
+"清掉本机登录（不注销当前账号）" = "Clear the local sign-in (the current account stays signed in)";
 "监控中：当前账号额度用完会切到下一个可用账号，并在中断的对话里发「%@」" = "Monitoring: when the current account runs out, switches to the next available account and sends “%@” in interrupted conversations";
 "移除" = "Remove";
 "空闲" = "Idle";

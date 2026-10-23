@@ -160,6 +160,15 @@ def last_start(tid):
     return ev[2] if ev and ev[2] else 0
 
 
+def limit_failed_at(tid):
+    """对话最后一个轮次因额度用完失败结束的时刻；最后一轮不是这样结束的为 0"""
+    files = thread_files(tid)
+    ev = find_last(files[0], LIFECYCLE) if files else None
+    if ev and ev[0] == "task_complete" and error_info(ev[1]) == "usage_limit_exceeded":
+        return ev[2] or 0
+    return 0
+
+
 def all_rollouts():
     return glob.glob(os.path.join(SESSIONS, "*", "*", "*", "rollout-*.jsonl"))
 
@@ -462,7 +471,7 @@ def session_titles():
 def sessions(hours=48):
     """最近 hours 小时内有动静的主对话：名称、项目、状态、续答排队情况、跑在哪个账号
 
-    账号：进行中（running / stalled）的就是当前槽；其余按切号历史取「最后活动时刻在用的那个」。
+    账号：进行中（running / stalled）的就是当前槽；其余按切号历史取「最后一轮结束时在用的那个」。
     """
     now = time.time()
     st = eng.read_json(eng.STATE, {})
@@ -521,14 +530,17 @@ def sessions(hours=48):
             if pz >= ((ls[2] if ls else 0) or 0):
                 status = "paused"               # 在会话页暂停的，之后没开过新一轮
         cwd = _read_meta(g["main"])[2] or ""
+        # 最后一轮已结束的按结束时刻算：之后文件还会被写（比如 ChatGPT 打开对话时记的 thread_settings_applied），
+        # 拿文件修改时间去查切号历史，会算成后来才切过去、对话根本没在上面跑过的账号
+        last = ev[2] if ev and ev[0] != "task_started" and ev[2] else g["last"]
         if status in ("running", "stalled") and cur_slot:
             slot, mail = cur_slot, cur_mail
         else:
-            slot, mail = eng.slot_at(hist, g["last"])
+            slot, mail = eng.slot_at(hist, last)
         rows.append({"thread": tid, "title": titles.get(tid) or "",
                      "project": os.path.basename(cwd.rstrip("/")), "cwd": cwd,
                      "status": status, "error": err, "turnStartedAt": started,
-                     "lastActivity": g["last"], "subagents": g["subs"],
+                     "lastActivity": last, "subagents": g["subs"],
                      "queued": tid in queued, "slot": slot, "email": mail, **current_settings(g["main"])})
     order = {"running": 0, "stalled": 1, "limited": 2, "interrupted": 3}
     rows.sort(key=lambda r: (order.get(r["status"], 9), -r["lastActivity"]))
@@ -904,40 +916,72 @@ class Daemon:
         why = (errs or triggers)[0]["why"]
         e = eng.fetch_usage(self.cur)
         back = eng.available_at(e, now)
-        if back == 0 and not e.get("error"):
-            if not errs:
-                log(t("槽 {slot} 出现额度用满信号，但联网确认仍可用，忽略", slot=self.cur))
-                self.ignore_rate_until = now + 60
-                return
-            # 轮次因限额失败、服务端却说可用（如 team 空间 credits 用完）：先挡半小时
-            eng.merge_quota(self.cur, {"block_until": now + 1800, "block_reason": why[:80]})
-        elif back is None or e.get("error"):
+        full = [w["reset_at"] for w in (e.get("primary"), e.get("secondary")) if eng.window_full(w, now)]
+        if back == 0 and not e.get("error") and not errs:
+            log(t("槽 {slot} 出现额度用满信号，但联网确认仍可用，忽略", slot=self.cur))
+            self.ignore_rate_until = now + 60
+            return
+        if back is None or e.get("error"):
             eng.merge_quota(self.cur, {"block_until": now + 1800,
                                        "block_reason": t("撞限，额度查询失败（{err}）", err=e.get('error'))})
+        elif errs and not full:
+            # 轮次因限额失败、窗口却没用满（如 team 空间 credits 用完）：先挡半小时。服务端这时常说可用，
+            # 或 limit_reached 过一会儿又变回 false，不挡的话一会儿就被当成可用、切回来再撞
+            eng.merge_quota(self.cur, {"block_until": now + 1800, "block_reason": why[:80]})
         log(t("槽 {slot} 额度用完（{why}）", slot=self.cur, why=why))
         last = main_thread(triggers[-1]["path"])
         self.enqueue(threads, now, last=last)
         busy = self.tracker.active_threads() - threads
         if busy:
-            # 同账号上还有对话在跑：等它们自己撞限停下再切，免得退出 ChatGPT 时被打断（见 DRAIN_MAX）
-            self.st["drain"] = {"since": now, "slot": self.cur}
+            # 同账号上还有对话在跑：等它们自己撞限停下再切，免得退出 ChatGPT 时被打断（见 DRAIN_MAX）。
+            # 记下剩余重置券数、用满窗口的重置时刻，等的时候据此认出「当前号恢复了」（见 cur_recovered）
+            self.st["drain"] = {"since": now, "slot": self.cur, "resets": e.get("resets"),
+                                "full_until": max(full, default=0)}
             log(t("还有 {n} 个对话在跑，等它们都自己停下再切号（最多等 {m} 分钟）", n=len(busy), m=DRAIN_MAX // 60))
             return
         self.rotate(now, t("槽 {slot} 额度用完", slot=self.cur))
 
+    def cur_recovered(self, d, live=False):
+        """撞限后（d = drain 记录）当前账号又能用了：先要有恢复的依据 —— 用了重置券（在这里用的，或剩余券数
+        比撞限时少，即在 ChatGPT 里用的）、或撞限时用满的窗口已到重置时刻 —— 再看 d["since"] 之后的额度记录没用满。
+        光看「没用满」不行：team 空间 credits 用完时服务端照样说 0%、可用，会在同一个号上反复续答、反复撞限。
+        live = 先联网查一次再判断，否则看缓存（当前槽每 USAGE_CUR_EVERY 刷新一次）"""
+        if not self.cur:
+            return False
+        now = time.time()
+        e = (eng.fetch_usage(self.cur) if live else eng.load_quota().get(self.cur)) or {}
+        if e.get("error") or e.get("at", 0) <= d["since"]:
+            return False
+        credit = (e.get("credit_used_at") or 0) > d["since"] or \
+            (d.get("resets") is not None and (e.get("resets") or 0) < d["resets"])
+        reset = 0 < (d.get("full_until") or 0) <= now
+        # 撞限时挡的半小时不算：恢复的依据已经有了
+        if not (credit or reset) or eng.available_at(dict(e, block_until=0), now) != 0:
+            return False
+        eng.merge_quota(self.cur, {"block_until": 0})
+        return True
+
     def check_drain(self, now):
         """撞限后在等别的对话停下：都停了（做完、撞限、或 15 分钟没动静）就切号；等够 DRAIN_MAX 还在跑的
-        照常切号，并加进续答队列"""
+        照常切号，并加进续答队列。等的时候当前账号又能用了（比如用了重置券）就不切号，直接续答"""
         d = self.st.get("drain")
         if not d:
             return
         if self.cur != d["slot"]:
             self.st["drain"] = None              # 期间手动切了号
             return
+        if self.cur_recovered(d):
+            self.st["drain"] = None
+            log(t("槽 {slot} 已恢复可用（比如用了重置券），不切号，直接续答", slot=self.cur))
+            return
         busy = self.tracker.active_threads()
         if busy and now - d["since"] < DRAIN_MAX:
             return
         self.st["drain"] = None
+        # 切号前联网再确认一次：缓存可能是几分钟前的
+        if self.cur_recovered(d, live=True):
+            log(t("槽 {slot} 已恢复可用（比如用了重置券），不切号，直接续答", slot=self.cur))
+            return
         if busy:
             log(t("等了 {m} 分钟还有 {n} 个对话在跑，照常切号（它们会被打断，切号后打开对话续答）", m=DRAIN_MAX // 60, n=len(busy)))
             self.enqueue(busy, now)
@@ -1084,9 +1128,24 @@ class Daemon:
             # 放弃计时从真正开始续答算起：等额度重置可能要等好几个小时
             item.setdefault("started", now)
             done = self.resumed_by_someone(item)
+            failed = limit_failed_at(tid) if done else 0
             if done is None:
                 log(t("续答跳过：找不到对话 {id}… 的记录文件", id=tid[:8]))
                 q.remove(item)
+            elif failed:
+                # 新的一轮也因额度用完失败了，不算续上（比如排的「继续」在切号前的旧账号上跑了）
+                if failed < self.st["last_switch_at"]:
+                    # 失败在切号之前：以这一轮为新起点，在现在的账号上再排一次
+                    item["base"] = last_start(tid)
+                    for k in ("qid", "queued_at", "woke"):
+                        item.pop(k, None)
+                    log(t("对话 {id}… 续答的那一轮在切号前的账号上因额度用完失败了，在当前账号上再续", id=tid[:8]))
+                else:
+                    # 就在当前账号上失败的：撞限流程会接手（切号后再续），这里不再原地重发
+                    q.remove(item)
+                    log(t("续答没成功：对话 {id}… 的这一轮也因额度用完失败了", id=tid[:8]))
+                    if item.get("bg") or item.get("manual"):
+                        notify(t("续答没成功：当前账号额度用完了"), "warn", "session")
             elif done:
                 q.remove(item)
                 # 新轮次不一定是我们排的那条跑起来的（比如在 ChatGPT 里点了继续）：撤掉，免得残留在队列里
@@ -1461,6 +1520,17 @@ class Daemon:
                 log(t("对话 {id}… 加入续答队列", id=tid[:8]))
             front.append(item)
         self.st["queue"] = front + q
+        # 等别的对话停下（drain）、全部用完在等（wait）时队列不动，点了「继续」不能没反应
+        if self.st.get("wait"):
+            self.st["wait"]["until"] = now       # 马上重新挑号：当前号恢复了就直接续答，别的号能用就切过去
+        elif self.st.get("drain"):
+            if self.cur_recovered(self.st["drain"], live=True):
+                self.st["drain"] = None
+                log(t("槽 {slot} 已恢复可用（比如用了重置券），不切号，直接续答", slot=self.cur))
+            else:
+                msg = t("当前账号额度还没恢复，这些对话已排到最前面，等同账号上的对话停下、切号后马上继续")
+                log(msg)
+                notify(msg, "warn", "session")
 
     def tick(self):
         cfg = eng.load_config()
@@ -1553,6 +1623,16 @@ eng.EN.update({
     "已切到槽 {slot}（{email}），等待 ChatGPT 就绪": "Switched to slot {slot} ({email}), waiting for ChatGPT to be ready",
     "已切到 {email}，稍后在原对话里继续": "Switched to {email}; continuing in the original conversations shortly",
     "当前槽 {slot} 已可用，结束等待": "Current slot {slot} is available; done waiting",
+    "槽 {slot} 已恢复可用（比如用了重置券），不切号，直接续答":
+        "Slot {slot} is usable again (a reset credit was used, for example); not switching, resuming now",
+    "当前账号额度还没恢复，这些对话已排到最前面，等同账号上的对话停下、切号后马上继续":
+        "The current account is still used up; these conversations are first in line and will continue "
+        "as soon as the other conversations on this account stop and the app switches accounts",
+    "对话 {id}… 续答的那一轮在切号前的账号上因额度用完失败了，在当前账号上再续":
+        "Conversation {id}…: the resumed turn failed on the previous account (usage limit); resuming again on the current account",
+    "续答没成功：对话 {id}… 的这一轮也因额度用完失败了":
+        "Resume failed: conversation {id}…'s new turn also hit the usage limit",
+    "续答没成功：当前账号额度用完了": "Couldn't resume: the current account is used up",
     "槽 {slot} 额度已恢复，无需切号，直接续答": "Slot {slot} has recovered; no switch needed, resuming directly",
     "额度已恢复，继续工作": "Usage recovered, back to work",
     "等待到点": "Done waiting",

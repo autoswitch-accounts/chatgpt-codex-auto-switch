@@ -190,6 +190,18 @@ The app only talks to `chatgpt.com` and `auth.openai.com`.
 </details>
 
 <details>
+<summary><b>Why doesn't it switch right away when the limit is hit?</b></summary>
+
+Switching quits ChatGPT, which would interrupt the account's other running conversations, and interrupted ones are harder to
+resume in the background. The server usually lets a running turn finish after the limit, so it waits for them to stop on their
+own first (a turn silent for 15 minutes counts as stuck; at most 60 minutes).
+
+If the current account becomes usable again while it waits (say you used a reset credit), it doesn't switch and resumes on that
+account. Clicking *Continue* / *Continue all* on the Sessions page during the wait checks the account first: usable means it
+resumes right away; otherwise you get a notification that those conversations are first in line.
+</details>
+
+<details>
 <summary><b>Will it spend my reset credits automatically?</b></summary>
 
 Never. A reset credit is only used when you click *Reset* and confirm.
