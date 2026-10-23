@@ -4,10 +4,11 @@
 `xattr -dr com.apple.quarantine "/Applications/ChatGPT 账号.app"`。
 
 ### 本版更新
-- **英文界面**：设置 → 窗口 → 语言（跟随系统 / 中文 / English），切换后 App 自动退出再重开；消息中心、日志里以前写下的中文也按当前语言显示
-- **重置券按账号（空间）分开**：同一个邮箱在不同团队空间里的券各是各的，详情、表格、确认弹窗都按槽位显示；修好了在第二个空间点「重置」提示失败（no_credit）的问题
-- 默认续答用语跟着语言走（中文「继续」/ English "Continue"），自己改过的不动
-- 会话页：模型列对齐，各列收紧，操作列不再超出窗口
+- **添加账号不再让当前账号失效**：以前添加账号时会在服务器端注销当时登录的账号，它存在 App 里的登录跟着失效、额度一直查不到；现在只清掉本机的登录。已经因此失效的账号会显示「需重新登录」，删掉后重新添加即可
+- **登录失效的账号会被标出来**：查额度被拒时先自动刷新一次凭证，刷不了就标红「需重新登录」，自动切号也不再切过去
+- **团队空间额度（credits）用完时续答更可靠**：不会因为额度显示「可用」就在同一个没额度的账号上反复发「继续」；切号前刚失败的那次「继续」，切号后会在新账号上再续一次
+- **等待切号时点「继续」/「全部继续」马上生效**：当前账号用重置券恢复了就不切号、直接续答；还没恢复会发通知说明
+- 会话页的「账号」列显示对话停下时所在的账号
 
 ### 功能
 - 额度用完自动切号，并在被打断的对话里自动发「继续」
@@ -21,4 +22,4 @@
 
 Download the zip, unzip, and drag the app into Applications (macOS 14+, Apple silicon). The build is ad-hoc signed and not notarized — see the README for first-launch steps.
 
-New in this release: an English UI (Settings → Window → Language; the app relaunches itself, and older notices and logs are shown in the current language); reset credits tracked per account/workspace, fixing the "no_credit" failure when the same email sits in two workspaces; the default resume prompt follows the language; tidier Sessions columns.
+New in this release: adding an account no longer signs out the account that was in use (newer Codex versions revoke the login on sign-out, which left that account's saved login dead); accounts whose saved login was revoked are marked "Needs sign-in" and skipped by auto-switching; more reliable resuming when a workspace runs out of credits (no more repeated "Continue" on an account with nothing left, and a resume that failed right before a switch is retried on the new account); Continue / Continue All work while a switch is pending, and a reset credit used meanwhile keeps you on the current account; the Sessions page shows the account a conversation stopped on.
